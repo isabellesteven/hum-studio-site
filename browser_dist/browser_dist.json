@@ -1,0 +1,10 @@
+{
+  "blob_format_version": 2,
+  "browser_api_version": 1,
+  "hum_version": "0.1.0",
+  "manifest_checksum": "fnv1a32(newline-canonicalized-utf8-bytes)",
+  "node_api_version": 1,
+  "schema_version": 1,
+  "wheel": "hum-0.1.0-py3-none-any.whl",
+  "wheel_sha256": "11dbd1775609962c39beeeba65bd7d97c7acb773c6bc46d8af406eaef4264559"
+}

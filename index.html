@@ -1,0 +1,4227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>hum tune</title>
+
+<!-- CodeMirror 6 (Editor tab). Each ?external= list externalizes only the
+     CM/Lezer packages so they resolve through THIS map (one shared copy of
+     @codemirror/state and @codemirror/view — duplicates break CM6). Leaf deps
+     (style-mod, crelt, w3c-keyname) are left for esm.sh to bundle. -->
+<script type="importmap">
+{
+  "imports": {
+    "@codemirror/state":        "https://esm.sh/@codemirror/state@6",
+    "@codemirror/view":         "https://esm.sh/@codemirror/view@6?external=@codemirror/state",
+    "@codemirror/language":     "https://esm.sh/@codemirror/language@6?external=@codemirror/state,@codemirror/view,@lezer/common,@lezer/highlight,@lezer/lr",
+    "@codemirror/commands":     "https://esm.sh/@codemirror/commands@6?external=@codemirror/state,@codemirror/view,@codemirror/language,@lezer/common",
+    "@codemirror/search":       "https://esm.sh/@codemirror/search@6?external=@codemirror/state,@codemirror/view",
+    "@codemirror/autocomplete": "https://esm.sh/@codemirror/autocomplete@6?external=@codemirror/state,@codemirror/view,@codemirror/language,@lezer/common",
+    "@codemirror/lint":         "https://esm.sh/@codemirror/lint@6?external=@codemirror/state,@codemirror/view",
+    "@lezer/common":            "https://esm.sh/@lezer/common@1",
+    "@lezer/highlight":         "https://esm.sh/@lezer/highlight@1?external=@lezer/common",
+    "@lezer/lr":                "https://esm.sh/@lezer/lr@1?external=@lezer/common",
+    "@codemirror/legacy-modes/mode/toml": "https://esm.sh/@codemirror/legacy-modes@6.5.3/mode/toml?external=@codemirror/language",
+    "codemirror":               "https://esm.sh/codemirror@6.0.1?external=@codemirror/state,@codemirror/view,@codemirror/language,@codemirror/commands,@codemirror/search,@codemirror/autocomplete,@codemirror/lint"
+  }
+}
+</script>
+
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #1a1a1e;
+  --panel:    #24242a;
+  --border:   #38383f;
+  --text:     #d4d4d8;
+  --muted:    #71717a;
+  --accent:   #6366f1;
+  --accent2:  #22d3ee;
+  --param:    #34d399;
+  --err:      #f87171;
+  --row-h:    36px;
+}
+
+body {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-size: 13px;
+}
+
+/* ── Toolbar ─────────────────────────────────────────────────────────── */
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+#toolbar h1 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  margin-right: 4px;
+}
+.tb-sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+#browser-audio-controls { display: none; align-items: center; flex-wrap: wrap; gap: 5px; }
+#browser-audio-controls select { max-width: 220px; }
+#browser-input-status { max-width: 320px; color: var(--muted); font-size: 11px; }
+#browser-live-diagnostics { width: 100%; font: 11px/1.5 monospace; color: var(--muted); white-space: normal; }
+#browser-live-meter { width: 120px; height: 9px; vertical-align: middle; }
+#browser-file-name { color: var(--muted); max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+#browser-audio-controls label { color: var(--muted); font-size: 12px; }
+
+
+button {
+  background: var(--border);
+  color: var(--text);
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s;
+}
+button:hover { background: #4a4a55; }
+button:disabled { opacity: 0.4; cursor: default; }
+button.primary { background: var(--accent); color: #fff; }
+button.primary:hover { background: #818cf8; }
+button.danger { background: #7f1d1d; color: #fca5a5; }
+button.danger:hover { background: #991b1b; }
+
+select {
+  background: var(--border);
+  color: var(--text);
+  border: none;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#status {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+#status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+#status-dot.connected { background: #4ade80; }
+#status-dot.error     { background: var(--err); }
+#compat-badge { font-size: 11px; color: #52525b; margin-left: 8px; white-space: nowrap; }
+#compat-badge.ok  { color: #4ade80; }
+#compat-badge.err { color: var(--err); }
+
+/* ── Build chip (current build indicator) ────────────────────────────── */
+#build-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  background: var(--panel-2, #27272a);
+  border: 1px solid #3f3f46;
+  border-radius: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+#build-chip-name { color: #d4d4d8; font-variant-numeric: tabular-nums; }
+#build-chip-tags { display: inline-flex; gap: 3px; }
+.chip-tag {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: #3f3f46;
+  color: #71717a;          /* dimmed = absent */
+}
+.chip-tag.lit { background: var(--accent); color: #fff; }
+#build-chip-reload {
+  padding: 0 4px;
+  font-size: 12px;
+  line-height: 1;
+  background: transparent;
+  color: var(--muted);
+  display: none;           /* shown only for reloadable folder builds */
+}
+#build-chip-reload:hover { color: var(--text); }
+#compile-status { font-size: 11px; color: #a1a1aa; margin-left: 8px; white-space: nowrap; }
+#compile-status.busy { color: #fbbf24; }
+#compile-status.ok   { color: #4ade80; }
+#compile-status.err  { color: var(--err); }
+
+/* ── Main layout ─────────────────────────────────────────────────────── */
+#main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Parameter panel ─────────────────────────────────────────────────── */
+#param-panel {
+  width: 420px;
+  min-width: 280px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+}
+
+#param-search-row {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  flex-shrink: 0;
+}
+#param-search {
+  width: 100%;
+  background: #18181c;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 8px;
+}
+#param-search:focus { outline: none; border-color: var(--accent); }
+#param-search::placeholder { color: var(--muted); }
+#param-search:disabled { opacity: 0.35; }
+#param-scope-row {
+  display: flex; align-items: center; gap: 6px; padding: 4px 8px;
+  border-bottom: 1px solid var(--border); color: var(--muted);
+  font-size: 11px; background: var(--panel);
+}
+#param-scope-label { flex: 1; }
+#param-scope-row button { padding: 2px 5px; font-size: 11px; }
+#param-scope-row button:disabled { opacity: .3; cursor: default; }
+.param-pin {
+  border: 0; padding: 0; width: 20px; height: 20px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border-radius: 3px; color: #92929d;
+  cursor: pointer;
+}
+.param-pin svg { display: block; width: 18px; height: 18px; }
+/* Tilted, unpressed outline → upright, filled pin entering a surface. */
+.param-pin .pin-body {
+  transform: rotate(-38deg); transform-origin: 12px 12px;
+  transition: transform 120ms ease;
+}
+.param-pin .pin-head {
+  fill: none; stroke: currentColor; stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+.param-pin .pin-shaft, .param-pin .pin-surface {
+  fill: none; stroke: currentColor; stroke-width: 1.5;
+  stroke-linecap: round;
+}
+.param-pin .pin-surface { opacity: 0; transition: opacity 120ms ease; }
+.param-pin:hover { color: #fbbf24; }
+.param-pin.pinned { color: #fbbf24; background: rgba(251, 191, 36, .1); }
+.param-pin.pinned .pin-body { transform: translateY(1px); }
+.param-pin.pinned .pin-head { fill: currentColor; }
+.param-pin.pinned .pin-surface { opacity: 1; }
+.param-pin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) {
+  .param-pin .pin-body, .param-pin .pin-surface { transition: none; }
+}
+.param-row.pinned, .param-row-array.pinned { box-shadow: inset 2px 0 0 #a16207; }
+
+#param-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.node-group { margin-bottom: 2px; }
+.node-group.selected > .node-header { background: #272735; box-shadow: inset 2px 0 0 var(--accent); }
+
+.node-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+  user-select: none;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.node-header:hover { color: var(--text); }
+.node-chevron { font-size: 10px; transition: transform 0.15s; }
+.node-header.collapsed .node-chevron { transform: rotate(-90deg); }
+.node-params.hidden { display: none; }
+
+/* ── Parameter row ───────────────────────────────────────────────────── */
+.param-row {
+  display: grid;
+  grid-template-columns: 116px 20px minmax(25px,1fr) 80px;
+  align-items: center;
+  height: var(--row-h);
+  padding: 0 8px 0 20px;
+  gap: 6px;
+  border-bottom: 1px solid #2a2a30;
+  transition: background 0.1s;
+}
+.param-row:hover { background: #2a2a32; }
+.param-row.flash-err { background: #3f1515; }
+
+.param-name {
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.param-name:hover { color: var(--accent2); }
+.param-name.graphed { color: var(--accent2); font-weight: 600; }
+.param-name .mut-badge {
+  display: inline-block;
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-left: 4px;
+  vertical-align: middle;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.mut-param  { background: #1a3d2e; color: var(--param); }
+.mut-array  { background: #1e2d45; color: var(--accent2); }
+
+/* ── Array parameter row ─────────────────────────────────────────────── */
+.param-row-array {
+  display: grid;
+  grid-template-columns: 116px 20px minmax(25px,1fr);
+  grid-template-rows: auto auto;
+  align-items: start;
+  padding: 6px 8px 6px 20px;
+  gap: 4px 6px;
+  border-bottom: 1px solid #2a2a30;
+  transition: background 0.1s;
+}
+.param-row-array:hover { background: #2a2a32; }
+.param-row-array .param-name { grid-column: 1; }
+.param-row-array .param-pin { grid-column: 2; }
+.param-array-controls { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; }
+.param-array-textarea {
+  width: 100%;
+  background: #18181c;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 11px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  padding: 3px 5px;
+  resize: vertical;
+  min-height: 40px;
+}
+.param-array-textarea:focus { outline: none; border-color: var(--accent); }
+.param-array-buttons { display: flex; gap: 4px; }
+.param-array-btn { padding: 2px 8px; font-size: 11px; }
+
+.param-slider { width: 100%; accent-color: var(--accent); cursor: pointer; }
+.param-slider-placeholder { font-size: 11px; color: var(--muted); font-style: italic; }
+
+.param-input {
+  background: #18181c;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 2px 4px;
+  width: 100%;
+  text-align: right;
+}
+.param-input:focus { outline: none; border-color: var(--accent); }
+.param-input::-webkit-outer-spin-button,
+.param-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.param-input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+
+#empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--muted);
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+#empty-state p { font-size: 13px; line-height: 1.6; }
+
+/* ── Right panel + tabs ──────────────────────────────────────────────── */
+#right-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#tab-strip {
+  display: flex;
+  align-items: stretch;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.tab-btn {
+  padding: 6px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.tab-btn:hover { color: var(--text); background: transparent; }
+.tab-btn.active { color: var(--text); border-bottom-color: var(--accent); }
+
+#tab-content {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+.tab-pane {
+  display: none;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  flex-direction: column;
+}
+.tab-pane.active { display: flex; }
+
+/* ── Graph pane ──────────────────────────────────────────────────────── */
+#graph-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+#graph-legend { display: flex; gap: 10px; flex-wrap: wrap; margin-left: 4px; }
+.legend-item { display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+#graph-canvas { flex: 1; min-height: 0; width: 100%; display: block; }
+
+/* ── Profile pane ────────────────────────────────────────────────────── */
+#profile-header {
+  padding: 8px 12px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#profile-rows { overflow-y: auto; flex: 1; padding: 4px 12px; }
+.prof-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 80px 52px;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+  padding: 0 4px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.prof-row:hover { background: #202026; }
+.prof-row.selected { background: #272735; box-shadow: inset 2px 0 0 var(--accent); }
+.prof-name   { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.prof-bar-track { background: #2a2a32; border-radius: 2px; height: 6px; }
+.prof-bar-fill  { background: var(--accent); border-radius: 2px; height: 6px; transition: width 0.3s; }
+.prof-cycles { color: var(--muted); text-align: right; font-size: 11px; font-family: monospace; }
+.prof-pct    { color: var(--accent2); text-align: right; font-size: 11px; font-family: monospace; }
+
+/* ── Console pane ────────────────────────────────────────────────────── */
+#console-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 10px;
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--muted);
+  background: #111114;
+}
+.log-ok  { color: #86efac; }
+.log-err { color: var(--err); }
+.log-out { color: #93c5fd; }
+#console-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  flex-shrink: 0;
+}
+#console-prompt { color: var(--muted); font-family: monospace; font-size: 13px; flex-shrink: 0; }
+#console-input {
+  flex: 1;
+  background: #18181c;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: monospace;
+  padding: 3px 6px;
+}
+#console-input:focus { outline: none; border-color: var(--accent); }
+
+/* ── Graph View pane ─────────────────────────────────────────────────── */
+#graphview-toolbar {
+  height: 34px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  background: #18181c;
+}
+#graphview-toolbar .hint { margin-left: auto; color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#graphview-toolbar #graphview-zoom { color: #c4b5fd; font-size: 11px; min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
+#graphview-toolbar button:disabled { opacity: .4; cursor: default; }
+#graphview-canvas-wrap {
+  flex: 1;
+  overflow: hidden;
+  background: #111114;
+  cursor: grab;
+}
+#graphview-canvas-wrap.panning { cursor: grabbing; }
+#graphview-canvas { display: block; }
+
+/* ── Editor pane ─────────────────────────────────────────────────────── */
+#editor-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap; /* narrow windows: never clip Copy AI Context / Compile */
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#editor-path {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: 'Consolas', 'Monaco', monospace;
+  margin-left: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+}
+#ai-export-controls { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-left: auto; }
+#ai-context-scope { max-width: 110px; font-size: 11px; padding: 4px; }
+#ai-catalog-detail { max-width: 115px; font-size: 11px; padding: 4px; }
+#ai-export-status { color: var(--muted); font-size: 10px; min-width: 0; max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ai-export-status.error { color: var(--err); }
+#ai-export-status.ok { color: #86efac; }
+#btn-ai-download { padding: 4px 7px; }
+#editor-toolbar #btn-ed-compile { margin-left: 0 !important; }
+#editor-tabs {
+  display: flex;
+  align-items: stretch;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+#editor-tabs:empty { display: none; }
+.ed-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px 4px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+.ed-tab:hover { color: var(--text); }
+.ed-tab.active { color: var(--text); background: #2a2a32; border-bottom-color: var(--accent); }
+.ed-tab .ed-dirty { color: var(--accent2); font-size: 10px; }
+.ed-tab .ed-close { font-size: 14px; line-height: 1; color: var(--muted); border-radius: 3px; padding: 0 3px; }
+.ed-tab .ed-close:hover { background: #4a4a55; color: var(--text); }
+#editor-host {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+#editor-host .cm-editor { height: 100%; }
+#editor-host .cm-editor.cm-focused { outline: none; }
+
+/* ── Drag-drop overlay ───────────────────────────────────────────────── */
+#drop-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(99,102,241,0.18);
+  border: 3px dashed var(--accent);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  color: var(--accent);
+  pointer-events: none;
+}
+body.dragging #drop-overlay { display: flex; }
+
+/* ── Build-choice modal ──────────────────────────────────────────────── */
+#build-choice-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#build-choice-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px 18px;
+  min-width: 280px;
+  max-width: 480px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+#build-choice-title {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+/* scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+<link rel="icon" href="data:,">
+</head>
+<body>
+
+<div id="drop-overlay">Drop tuning / inspection JSON here</div>
+
+<div id="toolbar">
+  <h1>hum tune</h1>
+  <div class="tb-sep"></div>
+
+  <select id="transport-select" title="Target transport">
+    <option value="serial" selected>Web Serial</option>
+    <option value="humrt">hum-rt (WebSocket)</option>
+    <option value="web">Browser (WASM)</option>
+  </select>
+
+  <input id="ws-url" type="text" value="ws://127.0.0.1:8765/hum"
+         title="hum-rt WebSocket URL" style="width:205px;display:none">
+
+  <select id="baud-select" title="Baud rate">
+    <option value="9600">9600</option>
+    <option value="57600">57600</option>
+    <option value="115200" selected>115200</option>
+    <option value="230400">230400</option>
+    <option value="460800">460800</option>
+    <option value="921600">921600</option>
+  </select>
+
+  <button id="btn-connect" class="primary">Connect</button>
+  <button id="btn-disconnect" disabled>Disconnect</button>
+
+  <div id="browser-audio-controls">
+    <label for="browser-input-source">Input</label>
+    <select id="browser-input-source" title="Choose the browser audio source">
+      <option value="none">None</option>
+      <option value="file" selected>Audio file</option>
+      <option value="live">Live input</option>
+    </select>
+    <div id="browser-file-controls" style="display:flex;align-items:center;gap:5px">
+      <input id="browser-file-input" type="file" accept="audio/*" style="display:none">
+      <button id="browser-file-choose" title="Choose an audio file as graph input">Audio file…</button>
+      <span id="browser-file-name" title="No audio file selected">No file</span>
+      <button id="browser-file-play" title="Play through current Hum graph" disabled>Play</button>
+      <button id="browser-file-stop" title="Stop audio file" disabled>Stop</button>
+      <label title="Loop the selected audio file"><input id="browser-file-loop" type="checkbox" checked> Loop</label>
+    </div>
+    <div id="browser-live-controls" style="display:none;align-items:center;gap:5px;flex-wrap:wrap">
+      <select id="browser-input-device" title="Recording device"><option value="">System default microphone</option></select>
+      <button id="browser-input-refresh" title="Refresh available recording devices">Refresh</button>
+      <button id="browser-input-start" title="Capture from this device and route it through the connected Hum graph">Start capture</button>
+      <button id="browser-input-stop" title="Release recording device" disabled>Stop capture</button>
+      <span id="browser-input-status" role="status" aria-live="polite">Not capturing — connect Browser (WASM) to hear live input</span>
+      <label for="browser-live-meter">Input peak</label>
+      <meter id="browser-live-meter" min="0" max="1" value="0" low="0.7" high="0.98" optimum="0" aria-label="Live audio input peak"></meter>
+      <span id="browser-live-level">—</span>
+      <div id="browser-live-diagnostics" aria-live="off">Audio diagnostics appear when connected.</div>
+    </div>
+    <label for="browser-output-device">Output</label>
+    <select id="browser-output-device" title="Browser playback output device"><option value="">System default speakers</option></select>
+    <button id="browser-output-refresh" title="Refresh playback devices">Refresh outputs</button>
+  </div>
+
+  <div class="tb-sep"></div>
+
+  <input id="file-hum-edit" type="file" accept=".hum,.toml" style="display:none">
+
+  <button id="btn-load-blob" title="Choose a build folder to load (blob / tuning / inspection)">Open Build…</button>
+
+  <div id="build-chip" title="Current build">
+    <span id="build-chip-name">—</span>
+    <span id="build-chip-tags">
+      <span class="chip-tag" data-tag="blob">blob</span>
+      <span class="chip-tag" data-tag="tune">tune</span>
+      <span class="chip-tag" data-tag="inspect">inspect</span>
+    </span>
+    <button id="build-chip-reload" title="Reload this build folder (after a rebuild)">↺</button>
+  </div>
+
+  <button id="btn-flash-blob" title="Connect to a device to flash" disabled>Flash</button>
+
+  <div class="tb-sep"></div>
+
+  <button id="btn-dump" disabled>DUMP</button>
+  <button id="btn-profile" disabled>PROFILE</button>
+  <button id="btn-reset" disabled class="danger">RESET</button>
+
+  <div class="tb-sep"></div>
+
+  <button id="btn-save-preset" disabled>Save Preset</button>
+  <button id="btn-load-preset" disabled>Load Preset</button>
+  <input id="file-preset" type="file" accept=".json" style="display:none">
+
+  <div id="status">
+    <div id="status-dot"></div>
+    <span id="status-text">Not connected</span>
+  </div>
+  <span id="compat-badge" title="Blob compatibility">&#9679; ---</span>
+  <span id="compile-status" title="In-browser compiler status"></span>
+</div>
+
+<div id="main">
+
+  <!-- Left: parameter panel -->
+  <div id="param-panel">
+    <div id="param-search-row">
+      <input id="param-search" type="search" placeholder="Filter parameters…" autocomplete="off" disabled>
+    </div>
+    <div id="param-scope-row">
+      <span id="param-scope-label">All parameters</span>
+      <button id="btn-clear-selection" title="Clear node and connection selection" disabled>Clear selection</button>
+      <button id="btn-clear-pins" title="Unpin every parameter" disabled>Unpin all</button>
+    </div>
+    <div id="param-content">
+      <div id="empty-state">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        </svg>
+        <p>Use <strong>Editor → Open Project…</strong> for source + graph navigation; it also loads an existing project build when present.<br>
+           Use <strong>Open Build…</strong> for artifact-only inspection of an existing <strong>build/</strong> folder.<br>
+           Connect a Web Serial device or local hum-rt target to send changes.<br>
+           <span style="color:#52525b">(In-browser compiling requires serving this page over http(s).<br>
+           You can also drag a <strong>.tuning.json</strong> / <strong>.inspection.json</strong> here.)</span></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: tabbed region -->
+  <div id="right-panel">
+    <div id="tab-strip">
+      <button class="tab-btn active" data-tab="graph">Graph</button>
+      <button class="tab-btn" data-tab="profile">Profile</button>
+      <button class="tab-btn" data-tab="console">Console</button>
+      <button class="tab-btn" data-tab="graphview">Graph View</button>
+      <button class="tab-btn" data-tab="editor">Editor</button>
+    </div>
+    <div id="tab-content">
+
+      <!-- Graph pane -->
+      <div class="tab-pane active" id="pane-graph">
+        <div id="graph-header">
+          <span>Graph</span>
+          <span style="color:#52525b;font-size:11px">Click a parameter name to plot it</span>
+          <div id="graph-legend"></div>
+          <button id="btn-clear-graph" style="margin-left:auto;font-size:11px;padding:2px 7px">Clear</button>
+        </div>
+        <canvas id="graph-canvas"></canvas>
+      </div>
+
+      <!-- Profile pane -->
+      <div class="tab-pane" id="pane-profile">
+        <div id="profile-header">DSP Profile</div>
+        <div id="profile-rows"></div>
+      </div>
+
+      <!-- Console pane -->
+      <div class="tab-pane" id="pane-console">
+        <div id="console-log"></div>
+        <div id="console-input-row">
+          <span id="console-prompt">&gt;</span>
+          <input id="console-input" type="text" placeholder="Send command…" autocomplete="off" spellcheck="false">
+        </div>
+      </div>
+
+      <!-- Graph View pane -->
+      <div class="tab-pane" id="pane-graphview">
+        <div id="graphview-toolbar">
+          <button id="btn-gv-collapse">Collapse All</button>
+          <button id="btn-gv-expand">Expand All</button>
+          <button id="btn-gv-fit" title="Fit the entire graph in the view (large graphs may be reduced)">Fit Graph</button>
+          <button id="btn-gv-fit-selection" title="Zoom to the selected nodes or wire" disabled>Fit Selection</button>
+          <button id="btn-gv-actual" title="Display the graph at 100% zoom">100%</button>
+          <span id="graphview-zoom" aria-live="off">100%</span>
+          <span class="hint">Wheel: zoom · Drag: pan · Ctrl/Cmd: multi-select · Double-click: source</span>
+        </div>
+        <div id="graphview-canvas-wrap">
+          <canvas id="graphview-canvas"></canvas>
+        </div>
+      </div>
+
+      <!-- Editor pane (CodeMirror mounts into #editor-host, see hum_editor.js) -->
+      <div class="tab-pane" id="pane-editor">
+        <div id="editor-toolbar">
+          <button id="btn-ed-new">New</button>
+          <button id="btn-ed-open">Open…</button>
+          <button id="btn-ed-openproj" title="Open a project folder (hum.toml) — edit its .hum / .toml files in tabs, then Compile builds the whole project from your edits">Open Project…</button>
+          <button id="btn-ed-save">Save</button>
+          <button id="btn-ed-saveas">Save As…</button>
+          <span id="editor-path" title=""></span>
+          <div id="ai-export-controls" title="Generates local context only; does not contact an AI service">
+            <select id="ai-context-scope" aria-label="AI context scope" title="Focused: active graph + root hum.toml; Project: all open project .hum and .toml files">
+              <option value="focused" selected>Focused</option>
+              <option value="project">Project</option>
+            </select>
+            <select id="ai-catalog-detail" aria-label="AI node catalog detail" title="Node catalog: Compact includes all node names, pins and tunable parameter names plus detailed contracts for used nodes; Full includes every bundled node contract">
+              <option value="relevant" selected>Compact nodes</option>
+              <option value="full">Full nodes</option>
+            </select>
+            <button id="btn-ai-copy" title="Copy current Hum project context, V1 language reference, bundled node catalog, and compiler diagnostics to clipboard" disabled>Copy AI Context</button>
+            <button id="btn-ai-download" title="Download the same AI context as a Markdown file" disabled>↓ .md</button>
+            <span id="ai-export-status" role="status" aria-live="polite"></span>
+          </div>
+          <button id="btn-ed-compile" class="primary" title="Compile (Ctrl+Enter) — project files build the whole project; a standalone .hum compiles on its own">Compile ▶</button>
+        </div>
+        <div id="editor-tabs"></div>
+        <div id="editor-host"></div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<script src="hum_web.js?v=phase4_2_step3_1"></script>
+<script src="hum_audio_input.js?v=phase4_2_step3_1"></script>
+<script src="hum_ai_reference.js?v=phase4_1"></script>
+<script src="hum_ai_context.js?v=phase4_1"></script>
+<script>
+'use strict';
+
+// ─── §PROTOCOL ────────────────────────────────────────────────────────────────
+const Protocol = {
+
+  fmt: {
+    info:     ()           => 'INFO',
+    dump:     ()           => 'DUMP',
+    reset:    ()           => 'RESET',
+    profile:  ()           => 'PROFILE',
+    set:      (nid,pid,v)  => `SET ${nid} ${pid} ${v}`,
+    get:      (nid,pid)    => `GET ${nid} ${pid}`,
+    setArray: (nid,pid,n)  => `SET_ARRAY ${nid} ${pid} ${n}`,
+    getArray: (nid,pid)    => `GET_ARRAY ${nid} ${pid}`,
+    load:     (bytes)      => `LOAD ${bytes}`,
+  },
+
+  parse(line) {
+    if (line.startsWith('ERR')) {
+      const m = line.match(/^ERR\s+(\d+)\s+(\d+)/);
+      return m ? { kind: 'ERR_PARAM', nid: +m[1], pid: +m[2] }
+               : { kind: 'ERR_GENERIC' };
+    }
+    if (/^OK HUM\b/.test(line)) {
+      const m = line.match(
+        /^OK HUM\s+[\d.]+\s+blob_checksum=([0-9A-Fa-f]+)\s+nodes=(\d+)\s+params=(\d+)\s+block=(\d+)\s+sr=([\d.]+)/
+      );
+      return m
+        ? { kind: 'INFO', blobChecksum: parseInt(m[1], 16),
+            nodes: +m[2], params: +m[3], block: +m[4], sr: +m[5] }
+        : { kind: 'INFO_BAD' };
+    }
+    if (/^OK LOAD\s+\d+$/.test(line))   return { kind: 'LOAD_DONE' };
+    if (line === 'OK LOAD ready')         return { kind: 'LOAD_READY' };
+    if (line === 'OK SET_ARRAY ready')    return { kind: 'SET_ARRAY_READY' };
+    // SET_ARRAY done — must be tested before GET_ARRAY checks
+    { const m = line.match(/^OK SET_ARRAY\s+(\d+)\s+(\d+)$/);
+      if (m) return { kind: 'SET_ARRAY_DONE', nid: +m[1], pid: +m[2] }; }
+    // GET_ARRAY element line
+    { const m = line.match(/^OK GET_ARRAY\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+([\S]+)$/);
+      if (m) return { kind: 'GET_ARRAY_ELEM', nid: +m[1], pid: +m[2],
+                      total: +m[3], idx: +m[4], val: parseFloat(m[5]) }; }
+    if (line === 'OK GET_ARRAY')          return { kind: 'GET_ARRAY_DONE' };
+    { const m = line.match(/^OK PROFILE\s+budget\s+(\d+)$/);
+      if (m) return { kind: 'PROFILE_BUDGET', cycles: +m[1] }; }
+    { const m = line.match(/^OK PROFILE\s+(\d+)\s+(\d+)$/);
+      if (m) return { kind: 'PROFILE_NODE', nid: +m[1], cycles: +m[2] }; }
+    if (line === 'OK PROFILE')            return { kind: 'PROFILE_DONE' };
+    if (line === 'OK DUMP')               return { kind: 'DUMP_DONE' };
+    if (line === 'OK RESET')              return { kind: 'RESET_DONE' };
+    { const m = line.match(/^OK\s+(\d+)\s+(\d+)\s+([^\s]+)$/);
+      if (m) return { kind: 'OK_PARAM', nid: +m[1], pid: +m[2], val: parseFloat(m[3]) }; }
+    return { kind: 'UNKNOWN' };
+  },
+
+  isAck(cmd, msg) {
+    if (msg.kind === 'ERR_PARAM' || msg.kind === 'ERR_GENERIC') return true;
+    if (cmd === 'INFO')    return msg.kind === 'INFO' || msg.kind === 'INFO_BAD';
+    if (cmd === 'DUMP')    return msg.kind === 'DUMP_DONE';
+    if (cmd === 'RESET')   return msg.kind === 'RESET_DONE';
+    if (cmd === 'PROFILE') return msg.kind === 'PROFILE_DONE';
+    if (cmd.startsWith('LOAD '))      return msg.kind === 'LOAD_DONE';
+    if (cmd.startsWith('SET_ARRAY ')) return msg.kind === 'SET_ARRAY_DONE';
+    if (cmd.startsWith('GET_ARRAY ')) return msg.kind === 'GET_ARRAY_DONE';
+    if (cmd.startsWith('SET ') || cmd.startsWith('GET ')) return msg.kind === 'OK_PARAM';
+    return msg.kind !== 'UNKNOWN';
+  },
+};
+
+// ─── §STATE ───────────────────────────────────────────────────────────────────
+// doc: persists across connect/disconnect; reset only on loadTuningJSON
+const doc = {
+  tuning:     null,  // parsed .tuning.json
+  paramMap:   {},    // name → { ...descriptor, value?, values? }
+  graphSeries: [],   // [{ name, color, poll:{cmd,coalesceKey}, history:[{t,v}] }]
+  inspection: null,  // parsed .inspection.json — canonical Graph View input
+  graphModel: null,  // browser rendering model derived exclusively from inspection
+  // Shared UI selection: graph leaves, subgraphs and boundary nodes use the
+  // same graph IDs as the compiler-owned InspectionModel renderer.
+  selection: { nodeIds: new Set(), primaryNodeId: null, connectionId: null },
+  pinnedParams: new Set(),        // parameter names, independent of graph selection
+  collapsedParamNodes: new Set(), // persists accordion state across filtering
+  expandedSubgraphs: new Set(),   // instance paths; collapsed by default
+};
+
+// session: live connection state; partially reset on connect/disconnect
+const session = {
+  rxReceived:    false,
+  deviceInfo:    null,   // { blobChecksum, nodes, params, block, sr }
+  compatOk:      null,   // true | false | null
+  profileData:   {},     // nid → cycle count
+  profileBudget: 0,
+};
+
+// ─── §QUEUE ───────────────────────────────────────────────────────────────────
+// SET and GET commands are queued and sent one at a time.  The next command is
+// not sent until an OK or ERR response is received for the previous one.
+// Slider commits coalesce: only the latest pending value for a given
+// param is kept in the queue, so repeated updates never flood the device.
+//
+// ACK matching rules (to avoid DUMP intermediate lines releasing ackPending):
+//   DUMP   → sentinel "OK DUMP"
+//   RESET  → "OK RESET"
+//   SET/GET → "OK <N> <M> <val>" or "ERR <N> <M> ..."  (any ERR also clears)
+const cmdQueue  = [];
+let ackPending  = false;
+let ackTimer    = null;
+let currentCmd  = null;
+
+function enqueue(cmd, coalesceKey = null) {
+  if (session.compatOk === false && (cmd.startsWith('SET ') || cmd === 'DUMP')) {
+    addLog('⚠ Tuning blocked: device blob does not match loaded JSON', 'log-err');
+    return;
+  }
+  if (coalesceKey !== null) {
+    const i = cmdQueue.findIndex(e => e.key === coalesceKey);
+    if (i !== -1) cmdQueue.splice(i, 1);
+  }
+  cmdQueue.push({ cmd, key: coalesceKey });
+  pumpQueue();
+}
+
+function pumpQueue() {
+  if (ackPending || cmdQueue.length === 0 || !writer) return;
+  const { cmd } = cmdQueue.shift();
+  currentCmd = cmd;
+  ackPending = true;
+  if (ackTimer) clearTimeout(ackTimer);
+  ackTimer = setTimeout(() => {
+    addLog('⚠ ack timeout — clearing queue', 'log-err');
+    ackPending  = false;
+    ackTimer    = null;
+    currentCmd  = null;
+    cmdQueue.length = 0;
+  }, 2000);
+  sendCmd(cmd);
+}
+
+function releaseAck() {
+  if (ackTimer) { clearTimeout(ackTimer); ackTimer = null; }
+  ackPending = false;
+  currentCmd = null;
+  pumpQueue();
+}
+
+function isAck(line) {
+  if (!currentCmd) return false;
+  return Protocol.isAck(currentCmd, Protocol.parse(line));
+}
+
+// ─── §GRAPH STATE ─────────────────────────────────────────────────────────────
+const GRAPH_COLORS = ['#6366f1','#22d3ee','#f59e0b','#f87171'];
+const GRAPH_WINDOW = 30;
+let graphStart = null;
+let pollTimer  = null;
+let animFrame  = null;
+
+// ─── §LOGGING ─────────────────────────────────────────────────────────────────
+let _consoleLogEl = null;
+function addLog(text, cls) {
+  if (!_consoleLogEl) _consoleLogEl = document.getElementById('console-log');
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = text;
+  _consoleLogEl.appendChild(line);
+  _consoleLogEl.scrollTop = _consoleLogEl.scrollHeight;
+  if (_consoleLogEl.children.length > 500) _consoleLogEl.removeChild(_consoleLogEl.firstChild);
+}
+
+// ─── §TRANSPORT ───────────────────────────────────────────────────────────────
+let port          = null;
+let ws            = null;
+let writer        = null;
+let reader        = null;
+let readDone      = null;
+let disconnecting = false;
+let webHost = null;        // browser AudioWorklet host; mutually exclusive with Serial/WS
+let browserAudioFile = null;
+let captureAction = 0; // Invalidates late asynchronous Start capture completions.
+let outputDeviceId = '';
+let liveDiagnosticsTimer = null;
+function updateLiveDiagnostics() {
+  const meter = document.getElementById('browser-live-meter');
+  const level = document.getElementById('browser-live-level');
+  const detail = document.getElementById('browser-live-diagnostics');
+  const reading = webHost?.liveInputLevel?.();
+  meter.value = reading?.peak ?? 0;
+  level.textContent = reading ? (Number.isFinite(reading.peakDb) ? reading.peakDb.toFixed(1) + ' dBFS' : 'silence') +
+    (reading.clipping ? ' CLIP' : '') : '—';
+  const settings = browserAudioInput.settings();
+  const host = webHost?.diagnostics?.();
+  const capture = settings ? [settings.sampleRate ? settings.sampleRate + ' Hz' : 'rate unknown',
+    settings.channelCount ? settings.channelCount + ' ch' : 'channels unknown',
+    'EC ' + String(settings.echoCancellation), 'NS ' + String(settings.noiseSuppression),
+    'AGC ' + String(settings.autoGainControl)].join(' · ') : 'inactive';
+  const browser = host ? [host.audioContextRate ? host.audioContextRate + ' Hz' : 'rate unknown',
+    host.audioContextState, host.graphInputChannels + ' Hum input ch',
+    'output: ' + (host.outputDeviceId ? 'selected device' : 'system default') +
+    ' (' + host.outputMethod + ')'].join(' · ') : 'disconnected';
+  detail.textContent = 'Capture: ' + capture + ' | AudioContext: ' + browser;
+}
+function updateLiveDiagnosticsTimer() {
+  const active = !!(browserAudioInput.active && webHost?.liveStream);
+  if (active && !liveDiagnosticsTimer) liveDiagnosticsTimer = setInterval(updateLiveDiagnostics, 200);
+  if (!active && liveDiagnosticsTimer) { clearInterval(liveDiagnosticsTimer); liveDiagnosticsTimer = null; }
+  updateLiveDiagnostics();
+}
+async function refreshOutputDevices() {
+  const choice = document.getElementById('browser-output-device');
+  const old = choice.value || outputDeviceId;
+  try {
+    const all = await navigator.mediaDevices.enumerateDevices();
+    choice.replaceChildren(new Option('System default speakers', ''));
+    for (const device of all.filter(d => d.kind === 'audiooutput' && d.deviceId && d.deviceId !== 'default'))
+      choice.add(new Option(device.label || 'Audio output', device.deviceId));
+    choice.value = [...choice.options].some(o => o.value === old) ? old : '';
+  } catch (e) { addLog('⚠ Output discovery: ' + e.message, 'log-err'); }
+}
+
+const browserAudioInput = new window.HumAudioInput({
+  onChange: () => {
+    // Handles device-ended events as well as explicit Stop. An active capture
+    // must never leave its old MediaStreamSource feeding the worklet.
+    if (!browserAudioInput.active) webHost?.stopLiveInput();
+    if (document.getElementById('browser-input-device')) updateLiveInputUi();
+    updateLiveDiagnosticsTimer();
+  },
+});
+
+function updateLiveInputUi() {
+  const choice = document.getElementById('browser-input-device');
+  const old = choice.value;
+  choice.replaceChildren(new Option('System default microphone', ''));
+  for (const device of browserAudioInput.devices) {
+    // The browser may expose the default alias as well as physical devices.
+    if (device.deviceId && device.deviceId !== 'default')
+      choice.add(new Option(device.label, device.deviceId));
+  }
+  choice.value = [...choice.options].some(o => o.value === old) ? old : '';
+  const live = document.getElementById('browser-input-source').value === 'live';
+  document.getElementById('browser-live-controls').style.display = live ? 'flex' : 'none';
+  document.getElementById('browser-file-controls').style.display = live || document.getElementById('browser-input-source').value === 'none' ? 'none' : 'flex';
+  document.getElementById('browser-input-start').disabled = !browserAudioInput.supported || browserAudioInput.busy || browserAudioInput.active;
+  document.getElementById('browser-input-stop').disabled = !browserAudioInput.active && !browserAudioInput.busy;
+  choice.disabled = browserAudioInput.busy || browserAudioInput.active;
+  const settings = browserAudioInput.settings();
+  const actual = settings && [settings.sampleRate ? `${settings.sampleRate} Hz` : '',
+    settings.channelCount ? `${settings.channelCount} ch` : ''].filter(Boolean).join(', ');
+  document.getElementById('browser-input-status').textContent = browserAudioInput.error ||
+    (browserAudioInput.busy ? 'Requesting microphone permission…' :
+      browserAudioInput.active ? `Capturing${actual ? ' (' + actual + ')' : ''} — ${webHost?.liveStream === browserAudioInput.stream ? 'routed to Hum' : 'not routed (connect Browser WASM)'}` :
+      !browserAudioInput.supported ? 'Microphone access unavailable (use localhost or HTTPS)' :
+      'Not capturing — connect Browser (WASM) to hear live input');
+  updateLiveDiagnosticsTimer();
+}
+
+
+async function loadBrowserBuild() {
+  if (!webHost || !currentBuild.blob) return;
+  try {
+    await webHost.load(currentBuild.blob, doc.tuning, doc.inspection);
+    // The new graph may no longer accept the currently captured channels.
+    // Release the device if the host dropped its incompatible live route.
+    if (browserAudioInput.active && !webHost.liveStream) {
+      browserAudioInput.stop();
+      addLog('⚠ Live capture stopped: the reloaded graph has incompatible audio input', 'log-err');
+    }
+    updateLiveInputUi();
+  } catch (e) {
+    webHost?.stopLiveInput();
+    browserAudioInput.stop();
+    setStatus('error', 'Browser load failed');
+    addLog('✖ Browser load: ' + e.message, 'log-err');
+  }
+}
+
+async function connectWeb() {
+  if (!currentBuild.blob) throw new Error('Compile or open a Hum build before connecting Browser audio');
+  if (!window.HumWebHost) throw new Error('hum_web.js could not be loaded');
+  webHost = new window.HumWebHost({
+    assetUrl: versionedAsset,
+    onLine: line => handleResponse(line),
+    onError: message => {
+      addLog('✖ hum-web: ' + message, 'log-err');
+      setStatus('error', 'Browser audio error');
+    },
+    onLoaded: header => {
+      addLog(`✓ hum-web loaded ${header.block} frames @ ${header.sampleRate} Hz`, 'log-ok');
+      if (writer) {
+        // Old INFO/mismatch describes the previous blob, not the new one.
+        // Do not block the new DUMP while awaiting its INFO response.
+        cmdQueue.length = 0;
+        ackPending = false;
+        currentCmd = null;
+        if (ackTimer) { clearTimeout(ackTimer); ackTimer = null; }
+        session.deviceInfo = null;
+        session.compatOk = null;
+        renderCompatBadge();
+        sendInfo();
+        if (doc.tuning) enqueue('DUMP', 'DUMP');
+      }
+      updateFlashButton();
+      updateBrowserAudioButtons();
+    },
+  });
+  try {
+    await webHost.connect(currentBuild.blob, doc.tuning, doc.inspection);
+    if (outputDeviceId) await webHost.setOutputDevice(outputDeviceId);
+    writer = { write(data) {
+      webHost.command(new TextDecoder().decode(data).trim());
+      return Promise.resolve();
+    }, releaseLock() {} };
+    connectionUiConnected('Browser · WASM');
+    updateLiveInputUi();
+    void refreshOutputDevices();
+    document.getElementById('btn-profile').disabled = true;
+    updateBrowserAudioButtons();
+    addLog('↑ Browser AudioWorklet connected', 'log-ok');
+  } catch (e) {
+    if (webHost) await webHost.disconnect();
+    webHost = null;
+    throw e;
+  }
+}
+
+function updateBrowserAudioButtons() {
+  const ready = !!webHost?.ready;
+  document.getElementById('browser-file-play').disabled =
+    document.getElementById('browser-input-source').value !== 'file' ||
+    !ready || !browserAudioFile || !webHost.inputChannels;
+  document.getElementById('browser-file-stop').disabled = !ready;
+}
+
+
+function connectionUiConnected(label) {
+  setStatus('connected', label);
+  document.getElementById('btn-connect').disabled     = true;
+  document.getElementById('btn-disconnect').disabled  = false;
+  document.getElementById('btn-dump').disabled        = false;
+  document.getElementById('btn-profile').disabled     = false;
+  document.getElementById('btn-reset').disabled       = false;
+  document.getElementById('transport-select').disabled = true;
+  session.rxReceived = false;
+  session.deviceInfo = null;
+  session.compatOk   = null;
+  renderCompatBadge();
+  sendInfo();
+  updateFlashButton();
+  if (doc.tuning) enqueue('DUMP', 'DUMP');
+}
+
+async function connectSerial() {
+  if (!('serial' in navigator)) {
+    alert('Web Serial API not supported.\nUse Chrome or Edge.');
+    return;
+  }
+  port = await navigator.serial.requestPort();
+  const baud = parseInt(document.getElementById('baud-select').value, 10);
+  await port.open({ baudRate: baud });
+  writer = port.writable.getWriter();
+  readDone = readLoop();
+  connectionUiConnected(`Serial · ${baud}`);
+  addLog('↑ Web Serial connected', 'log-ok');
+  setTimeout(() => {
+    if (port && !session.rxReceived)
+      addLog('⚠ No data from serial target after 5 s', 'log-err');
+  }, 5000);
+}
+
+async function connectHumRt() {
+  const url = document.getElementById('ws-url').value.trim();
+  if (!url) throw new Error('WebSocket URL is empty');
+  await new Promise((resolve, reject) => {
+    const sock = new WebSocket(url);
+    sock.binaryType = 'arraybuffer';
+    const timer = setTimeout(() => { try { sock.close(); } catch(_) {} reject(new Error('WebSocket connect timeout')); }, 3000);
+    sock.onopen = () => {
+      clearTimeout(timer);
+      ws = sock;
+      writer = {
+        write(data) {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error('WebSocket is not open'));
+          ws.send(data instanceof Uint8Array ? data : new Uint8Array(data));
+          return Promise.resolve();
+        },
+        releaseLock() {}
+      };
+      sock.onmessage = ev => {
+        if (typeof ev.data === 'string') {
+          for (const raw of ev.data.split(/\r?\n/)) {
+            const line = raw.trimEnd();
+            if (line) handleResponse(line);
+          }
+        }
+      };
+      sock.onerror = () => {
+        if (!disconnecting) addLog('✖ hum-rt WebSocket error', 'log-err');
+      };
+      sock.onclose = () => {
+        if (!disconnecting && ws === sock) {
+          addLog('↓ hum-rt disconnected', 'log-err');
+          transportDisconnectedUi();
+        }
+      };
+      connectionUiConnected('hum-rt · localhost');
+      addLog(`↑ hum-rt connected · ${url}`, 'log-ok');
+      resolve();
+    };
+    sock.onerror = () => { clearTimeout(timer); reject(new Error(`Cannot connect to ${url}`)); };
+  });
+}
+
+async function connect() {
+  try {
+    const kind = document.getElementById('transport-select').value;
+    if (kind === 'humrt') await connectHumRt();
+    else if (kind === 'web') await connectWeb();
+    else await connectSerial();
+  } catch (e) {
+    setStatus('error', 'Connection failed');
+    addLog('✖ ' + e.message, 'log-err');
+    port = null; ws = null; writer = null;
+  }
+}
+
+function transportDisconnectedUi() {
+  port = null; ws = null; writer = null; reader = null; readDone = null;
+  setStatus('', 'Not connected');
+  document.getElementById('btn-connect').disabled     = false;
+  document.getElementById('btn-disconnect').disabled  = true;
+  document.getElementById('btn-dump').disabled        = true;
+  document.getElementById('btn-profile').disabled     = true;
+  document.getElementById('btn-reset').disabled       = true;
+  document.getElementById('transport-select').disabled = false;
+  updateBrowserAudioButtons();
+  session.deviceInfo = null;
+  session.compatOk = null;
+  renderCompatBadge();
+  updateFlashButton();
+}
+
+async function disconnect() {
+  ++captureAction;
+  webHost?.stopLiveInput();
+  browserAudioInput.stop();
+  if (!writer && !port && !ws && !webHost) return;
+  disconnecting = true;
+  cmdQueue.length = 0;
+  ackPending = false; currentCmd = null; session.rxReceived = false;
+  if (ackTimer) { clearTimeout(ackTimer); ackTimer = null; }
+  if (reader) { try { await reader.cancel(); } catch(_) {} }
+  if (readDone) { try { await readDone; } catch(_) {} }
+  if (writer) { try { writer.releaseLock(); } catch(_) {} }
+  if (port) { try { await port.close(); } catch(_) {} }
+  if (ws) { try { ws.close(); } catch(_) {} }
+  if (webHost) { await webHost.disconnect(); webHost = null; }
+  transportDisconnectedUi();
+  disconnecting = false;
+  addLog('↓ Disconnected', 'log-err');
+}
+
+async function sendCmd(cmd) {
+  if (!writer) return;
+  try {
+    addLog('→ ' + cmd, 'log-out');
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(cmd);                    // one Hum command per WS text message
+    } else {
+      await writer.write(new TextEncoder().encode(cmd + '\n'));
+    }
+  } catch(e) {
+    addLog('✖ send: ' + e.message, 'log-err');
+  }
+}
+
+class LineSplitter {
+  constructor() { this.buf = ''; }
+  transform(chunk, ctrl) {
+    this.buf += chunk;
+    const lines = this.buf.split('\n');
+    this.buf = lines.pop();
+    for (const l of lines) { const t = l.trimEnd(); if (t) ctrl.enqueue(t); }
+  }
+  flush(ctrl) { if (this.buf.trim()) ctrl.enqueue(this.buf.trim()); }
+}
+
+async function readLoop() {
+  const dec = new TextDecoder();
+  let lineBuf = '';
+  reader = port.readable.getReader();
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      lineBuf += dec.decode(value, { stream: true });
+      const lines = lineBuf.split('\n');
+      lineBuf = lines.pop();
+      for (const l of lines) { const t = l.trimEnd(); if (t) handleResponse(t); }
+    }
+  } catch(e) {
+    if (!disconnecting) addLog('✖ read error: ' + e.message, 'log-err');
+    if (!disconnecting) setStatus('error', 'Read error — reconnect');
+  } finally {
+    if (reader) { reader.releaseLock(); reader = null; }
+  }
+}
+
+function sendInfo() {
+  enqueue('INFO', 'info_check');
+}
+
+// ─── §PROTOCOL HANDLERS ───────────────────────────────────────────────────────
+function handleResponse(line) {
+  session.rxReceived = true;
+  const msg = Protocol.parse(line);
+  addLog('← ' + line, (msg.kind === 'ERR_PARAM' || msg.kind === 'ERR_GENERIC') ? 'log-err' : 'log-ok');
+  if (isAck(line)) releaseAck();
+  switch (msg.kind) {
+    case 'INFO':            onMsgInfo(msg);         break;
+    case 'LOAD_DONE':       onMsgLoadDone();         break;
+    case 'LOAD_READY':      onMsgLoadReady();        break;
+    case 'SET_ARRAY_READY': onMsgSetArrayReady();    break;
+    case 'GET_ARRAY_ELEM':  onMsgGetArrayElem(msg);  break;
+    case 'GET_ARRAY_DONE':  onMsgGetArrayDone();     break;
+    case 'PROFILE_BUDGET':  onMsgProfileBudget(msg); break;
+    case 'PROFILE_NODE':    onMsgProfileNode(msg);   break;
+    case 'PROFILE_DONE':    onMsgProfileDone();      break;
+    case 'OK_PARAM':        onMsgOkParam(msg);       break;
+    case 'ERR_PARAM':       onMsgErrParam(msg);      break;
+  }
+}
+
+function onMsgInfo(msg) {
+  session.deviceInfo = {
+    blobChecksum: msg.blobChecksum, nodes: msg.nodes,
+    params: msg.params, block: msg.block, sr: msg.sr,
+  };
+  updateCompat();
+  updateFlashButton();
+}
+function onMsgLoadDone()    { sendInfo(); if (doc.tuning) enqueue('DUMP', 'DUMP'); }
+function onMsgLoadReady()   {
+  if (writer && pendingBlobSend) {
+    writer.write(new Uint8Array(pendingBlobSend))
+      .catch(e => addLog('✖ LOAD binary send: ' + e.message, 'log-err'));
+    pendingBlobSend = null;
+  }
+}
+function onMsgSetArrayReady() {
+  if (writer && pendingArraySend) {
+    writer.write(pendingArraySend.buf)
+      .catch(e => addLog('✖ SET_ARRAY binary send: ' + e.message, 'log-err'));
+    pendingArraySend = null;
+  }
+}
+function onMsgGetArrayElem(msg) {
+  if (pendingGetArray && !isNaN(msg.val)) pendingGetArray.vals.push(msg.val);
+}
+function onMsgGetArrayDone() {
+  if (pendingGetArray) {
+    const { ta, vals } = pendingGetArray;
+    ta.value = vals.map(fmtVal).join(', ');
+    pendingGetArray = null;
+  }
+}
+function onMsgProfileBudget(msg) { session.profileBudget = msg.cycles; }
+function onMsgProfileNode(msg)   { session.profileData[msg.nid] = msg.cycles; }
+function onMsgProfileDone()      { renderProfile(); }
+
+function onMsgOkParam(msg) {
+  for (const p of Object.values(doc.paramMap)) {
+    if (p.node_id === msg.nid && p.param_id === msg.pid) {
+      updateDisplay(p.name, msg.val);
+      const g = doc.graphSeries.find(x => x.name === p.name);
+      if (g) {
+        const t = (Date.now() - graphStart) / 1000;
+        g.history.push({ t, v: msg.val });
+        pruneHistory(g);
+      }
+      break;
+    }
+  }
+}
+function onMsgErrParam(msg) {
+  for (const p of Object.values(doc.paramMap)) {
+    if (p.node_id === msg.nid && p.param_id === msg.pid) { flashErr(p.name); break; }
+  }
+}
+
+function flashErr(name) {
+  const row = document.querySelector(`.param-row[data-name="${CSS.escape(name)}"]`);
+  if (!row) return;
+  row.classList.add('flash-err');
+  setTimeout(() => row.classList.remove('flash-err'), 600);
+}
+
+function setStatus(state, text) {
+  document.getElementById('status-dot').className = state;
+  document.getElementById('status-text').textContent = text;
+}
+
+// Tooltip explaining the current compat state.  Only the mismatch line is
+// dynamic — it names both checksums so the user can identify which tuning/build
+// matches the device.  Compatibility depends solely on the tuning's
+// blob_checksum (see updateCompat), so the fix names only the tuning JSON.
+function compatTooltip() {
+  if (session.compatOk === false)
+    return `Blob mismatch: device runs ${hex32(session.deviceInfo.blobChecksum)}, ` +
+           `tuning targets ${hex32(doc.tuning.blob_checksum)}. ` +
+           `Flash this build, or load the tuning JSON that matches the device.`;
+  if (session.compatOk === true)
+    return `Device is running this build (blob ${hex32(session.deviceInfo.blobChecksum)}).`;
+  return 'Blob compatibility — connect a device and load a build to check.';
+}
+
+function renderCompatBadge() {
+  const el = document.getElementById('compat-badge');
+  if (session.compatOk === true)       { el.className = 'ok';  el.textContent = '● match'; }
+  else if (session.compatOk === false) { el.className = 'err'; el.textContent = '● mismatch'; }
+  else                                 { el.className = '';    el.textContent = '● ---'; }
+  el.title = compatTooltip();
+}
+
+function updateCompat() {
+  if (!session.deviceInfo || !doc.tuning) { session.compatOk = null; }
+  else { session.compatOk = (session.deviceInfo.blobChecksum === doc.tuning.blob_checksum); }
+  renderCompatBadge();
+}
+
+// ─── §TUNING JSON ─────────────────────────────────────────────────────────────
+function loadTuningJSON(text, opts = {}) {
+  let data;
+  try { data = JSON.parse(text); }
+  catch(e) { alert('Invalid JSON: ' + e.message); return; }
+  if (!data.params || !Array.isArray(data.params)) {
+    alert('Not a valid tuning JSON (missing "params" array).');
+    return;
+  }
+  // A tuning JSON identifies a build. Clear semantic graph state from the prior
+  // build; applyArtifacts() will layer the matching inspection model back on.
+  doc.inspection = null;
+  if (window.humEditor?.setInspection) window.humEditor.setInspection(null);
+  doc.selection = { nodeIds: new Set(), primaryNodeId: null, connectionId: null };
+  doc.expandedSubgraphs.clear();
+  // Preserve pins and accordion state on a rebuild of the same project,
+  // but don't carry either workspace setting into an unrelated project.
+  if (doc.tuning?.project !== data.project) {
+    doc.pinnedParams.clear();
+    doc.collapsedParamNodes.clear();
+  }
+  doc.tuning   = data;
+  doc.paramMap = {};
+  for (const p of data.params) {
+    const entry = Object.assign({}, p);
+    if (p.type === 'float32[]') {
+      entry.values = Array.isArray(p.default) ? [...p.default] : [];
+      delete entry.value;
+    } else {
+      entry.value = p.default;
+    }
+    doc.paramMap[p.name] = entry;
+  }
+  doc.pinnedParams = new Set([...doc.pinnedParams].filter(name =>
+    doc.paramMap[name] && doc.paramMap[name].mutable !== 'const'));
+  rebuildGraphModel();
+  // Reset the search before building/visibility-filtering the new parameter DOM.
+  const searchEl = document.getElementById('param-search');
+  searchEl.value = '';
+  searchEl.disabled = false;
+  renderParams();
+  document.getElementById('btn-save-preset').disabled = false;
+  document.getElementById('btn-load-preset').disabled = false;
+  addLog(`✓ Loaded ${data.params.length} params from "${data.project}"`, 'log-ok');
+  // When a blob flash follows (deferRefresh), the post-LOAD DUMP refreshes values
+  // against the NEW graph — dumping the old graph here would show stale defaults.
+  if (!opts.deferRefresh && writer) { sendInfo(); enqueue('DUMP', 'DUMP'); }
+  else { updateCompat(); }
+}
+
+function loadInspectionJSON(text) {
+  let data;
+  try { data = JSON.parse(text); }
+  catch(e) { alert('Invalid inspection JSON: ' + e.message); return false; }
+  if (data.schema_version !== 1 || !Array.isArray(data.nodes) || !Array.isArray(data.connections) ||
+      !Array.isArray(data.subgraphs)) {
+    alert('Not a Hum inspection JSON (expected inspection schema version 1 with source connections).');
+    return false;
+  }
+  const inspectProject = data.project && data.project.name;
+  if (doc.tuning && inspectProject && doc.tuning.project && inspectProject !== doc.tuning.project) {
+    addLog(`⚠ Inspection project "${inspectProject}" does not match tuning project "${doc.tuning.project}".`, 'log-err');
+  }
+  doc.inspection = data;
+  if (window.humEditor?.setInspection) window.humEditor.setInspection(data);
+  doc.selection = { nodeIds: new Set(), primaryNodeId: null, connectionId: null };
+  doc.expandedSubgraphs.clear();
+  rebuildGraphModel();
+  syncSelectionUI();
+  if (window.humEditor?.getCursorLocation) selectGraphFromSource(window.humEditor.getCursorLocation());
+  addLog(`✓ Loaded inspection model (${data.nodes.length} runtime nodes, ${data.connections.length} source connections)`, 'log-ok');
+  return true;
+}
+
+async function loadFiles(files) {
+  // Tuning identifies the build, so load it before the matching semantic inspection.
+  const sorted = [
+    ...files.filter(f => f.name.endsWith('.tuning.json')),
+    ...files.filter(f => f.name.endsWith('.inspection.json')),
+    ...files.filter(f => f.name.endsWith('.json') &&
+                         !f.name.endsWith('.tuning.json') &&
+                         !f.name.endsWith('.inspection.json')),
+    ...files.filter(f => !f.name.endsWith('.json')),
+  ];
+  let droppedArtifact = false;
+  for (const f of sorted) {
+    const text = await f.text();
+    if (f.name.endsWith('.inspection.json')) {
+      droppedArtifact = loadInspectionJSON(text) || droppedArtifact;
+    } else if (f.name.endsWith('.tuning.json') || text.includes('"params"')) {
+      loadTuningJSON(text); droppedArtifact = true;
+    } else if (text.includes('"schema_version"') && text.includes('"edges"') && text.includes('"nodes"')) {
+      droppedArtifact = loadInspectionJSON(text) || droppedArtifact;
+    } else {
+      applyPreset(text);
+    }
+  }
+  if (droppedArtifact) reconcileDroppedArtifacts();
+}
+
+// Dropped tuning/inspection JSON layers onto the current build (gap-fill).  Reflect the
+// new artifact state in currentBuild + chip + Flash.  A tuning drop with no prior
+// build seeds a blob-less build named after the tuning's project (no reload,
+// since there's no folder handle behind it).
+function reconcileDroppedArtifacts() {
+  if (!currentBuild.name && doc.tuning) {
+    currentBuild.name   = doc.tuning.project;
+    currentBuild.source = 'folder';
+  }
+  currentBuild.hasTuning     = !!doc.tuning;
+  currentBuild.hasInspection = !!doc.inspection;
+  currentBuild.checksum  = doc.tuning ? doc.tuning.blob_checksum : null;
+  renderBuildChip();
+  updateCompat();
+  updateFlashButton();
+}
+
+// ─── §BUILD FOLDER ────────────────────────────────────────────────────────────
+// Pick a build/ directory and auto-load the blob plus matching tuning and
+// semantic inspection JSON (shared stem).
+let lastDirHandle = null;  // remembered build folder, reloaded silently on Load Build
+
+async function hasReadPermission(handle) {
+  if (!handle || !handle.queryPermission) return false;
+  try { return (await handle.queryPermission({ mode: 'read' })) === 'granted'; }
+  catch (e) { return false; }
+}
+
+async function scanBuildDirectory(dir) {
+  const builds = {}; // stem → { blob, tuning, inspection } file handles
+  for await (const [name, h] of dir.entries()) {
+    if (h.kind !== 'file') continue;
+    let stem, key;
+    if      (name.endsWith('.humblob'))         { stem = name.slice(0, -8);  key = 'blob';       }
+    else if (name.endsWith('.tuning.json'))     { stem = name.slice(0, -12); key = 'tuning';     }
+    else if (name.endsWith('.inspection.json')) { stem = name.slice(0, -16); key = 'inspection'; }
+    else continue;
+    (builds[stem] = builds[stem] || {})[key] = h;
+  }
+  const stems = Object.keys(builds)
+    .filter(s => builds[s].blob || builds[s].tuning || builds[s].inspection)
+    .sort();
+  return { builds, stems };
+}
+
+// forcePicker=true (Open Build) always opens the picker to choose an artifact
+// folder. It intentionally grants access only to that folder; source navigation
+// becomes available when the matching project has also been opened in Editor.
+// forcePicker=false (Reload Build) re-reads the last folder silently once granted.
+async function openBuildFolder(forcePicker = false) {
+  if (!window.showDirectoryPicker) {
+    alert('Folder loading requires Chrome or Edge.');
+    return;
+  }
+  let dir;
+  try {
+    if (!forcePicker && await hasReadPermission(lastDirHandle)) {
+      dir = lastDirHandle;                       // silent reload — no picker, no permission modal
+    } else {
+      dir = await window.showDirectoryPicker({
+        mode: 'read',
+        startIn: lastDirHandle || undefined,     // reopen at the last-used folder
+      });
+      lastDirHandle = dir;
+    }
+  } catch (e) { return; } // user cancelled
+
+  const { builds, stems } = await scanBuildDirectory(dir);
+
+  // A stem is loadable with any current artifact; missing pieces gate only
+  // the capabilities that require them.
+  if (stems.length === 0) {
+    addLog('✖ No build artifacts (.humblob / .tuning.json / .inspection.json) in folder', 'log-err');
+    alert('No build artifacts found in that folder.\nExpected a .humblob, .tuning.json, or .inspection.json.');
+    return;
+  }
+  if (stems.length === 1) loadBuild(stems[0], builds[stems[0]]);
+  else                    promptBuildChoice(stems.sort(), builds);
+}
+
+// Ingest tuning + inspection JSON into the UI without flashing a blob. deferRefresh:
+// the blob flash (if any) re-DUMPs once the new graph is live, so don't dump
+// the OLD graph here.  Shared by loadBuild (prebuilt folders) and the in-browser
+// compiler path.
+function applyArtifacts({ tuningText, inspectionText }) {
+  // Tuning identifies the build and clears stale graph state; inspection then
+  // supplies the canonical semantic graph.
+  if (tuningText)     loadTuningJSON(tuningText, { deferRefresh: true });
+  if (inspectionText) loadInspectionJSON(inspectionText);
+}
+
+// Single entry point for "a build is now current".  Ingests its artifacts into
+// the UI (applyArtifacts) and records what we have, then refreshes the chip,
+// compat badge, and Flash button.  Never touches the device — flashing is the
+// user's explicit Flash click.  Both folder loads and editor compiles route here.
+function applyBuild({ name, source, blob, tuningText, inspectionText, dirHandle, stem }) {
+  applyArtifacts({ tuningText, inspectionText });
+  currentBuild.name      = name;
+  currentBuild.source    = source;
+  currentBuild.blob      = blob || null;
+  currentBuild.hasTuning     = !!tuningText;
+  currentBuild.hasInspection = !!inspectionText;
+  currentBuild.checksum  = doc.tuning ? doc.tuning.blob_checksum : null;
+  currentBuild.dirHandle = dirHandle || null;
+  currentBuild.stem      = stem || null;
+  renderBuildChip();
+  updateCompat();
+  updateFlashButton();
+  if (webHost && currentBuild.blob) void loadBrowserBuild();
+}
+
+// Toolbar chip: "name · CHECKSUM8" plus lit/dimmed [blob][tune][inspect] tags and a
+// reload affordance shown only for reloadable folder builds.
+function renderBuildChip() {
+  const nameEl = document.getElementById('build-chip-name');
+  if (currentBuild.name) {
+    const cs = currentBuild.checksum != null ? ' · ' + hex32(currentBuild.checksum) : '';
+    nameEl.textContent = currentBuild.name + cs;
+  } else {
+    nameEl.textContent = '—';
+  }
+  const tags = {
+    blob: { on: !!currentBuild.blob,      absent: 'No blob — Flash disabled' },
+    tune:    { on: !!currentBuild.hasTuning,     absent: 'No tuning — no param panel or compat badge' },
+    inspect: { on: !!currentBuild.hasInspection, absent: 'No inspection — Graph View unavailable' },
+  };
+  for (const [key, t] of Object.entries(tags)) {
+    const el = document.querySelector(`.chip-tag[data-tag="${key}"]`);
+    if (!el) continue;
+    el.classList.toggle('lit', t.on);
+    el.title = t.on ? `${key} present` : t.absent;
+  }
+  const reload = document.getElementById('build-chip-reload');
+  reload.style.display =
+    (currentBuild.source === 'folder' && currentBuild.dirHandle) ? 'inline' : 'none';
+}
+
+// Flash is enabled only when connected, we hold a blob, the device has reported
+// INFO, and its checksum differs from the current build's.  Otherwise disabled
+// with a title explaining why.
+function updateFlashButton() {
+  const btn = document.getElementById('btn-flash-blob');
+  if (webHost) {
+    btn.textContent = 'Reload Browser';
+    btn.disabled = !writer || !currentBuild.blob;
+    btn.title = btn.disabled ? 'Connect Browser audio and compile/open a build' :
+      'Reload this Hum blob in the browser AudioWorklet';
+    return;
+  }
+  btn.textContent = 'Flash';
+  let reason = null;
+  if (!writer)                        reason = 'Connect to a target to load';
+  else if (!currentBuild.blob)        reason = 'No blob in this build';
+  else if (!session.deviceInfo)       reason = 'Waiting for device INFO…';
+  else if (session.deviceInfo.blobChecksum === currentBuild.checksum)
+                                      reason = 'Device already runs this build';
+  btn.disabled = !!reason;
+  btn.title = reason || 'Flash this build to the connected device';
+}
+
+function editorHasSource(path) {
+  if (!path || !window.humEditor?.getBuffers) return false;
+  const norm = x => String(x || '').replace(/\\/g, '/').replace(/^\.\//, '');
+  const want = norm(path);
+  return window.humEditor.getBuffers().some(b => norm(b.path || b.name) === want);
+}
+
+async function loadBuild(stem, entry) {
+  try {
+    applyBuild({
+      name:   stem,
+      source: 'folder',
+      blob:   entry.blob ? await (await entry.blob.getFile()).arrayBuffer() : null,
+      tuningText:     entry.tuning     ? await (await entry.tuning.getFile()).text()     : null,
+      inspectionText: entry.inspection ? await (await entry.inspection.getFile()).text() : null,
+      dirHandle: lastDirHandle,
+      stem,
+    });
+    addLog(`✓ Loaded build "${stem}"`, 'log-ok');
+    const entryPath = doc.inspection?.project?.entry;
+    if (entryPath && !editorHasSource(entryPath)) {
+      const msg = `Build source is not loaded (${entryPath}). Open Editor → Open Project… for source↔graph navigation.`;
+      addLog(`⚠ ${msg}`, 'log-err');
+      console.warn('[Hum navigation]', msg);
+    }
+  } catch (e) {
+    addLog('✖ Load build: ' + e.message, 'log-err');
+  }
+}
+
+function promptBuildChoice(stems, builds) {
+  const overlay = document.createElement('div');
+  overlay.id = 'build-choice-overlay';
+  const card = document.createElement('div');
+  card.id = 'build-choice-card';
+
+  const title = document.createElement('div');
+  title.id = 'build-choice-title';
+  title.textContent = 'Multiple builds found — choose one to load';
+  card.appendChild(title);
+
+  for (const stem of stems) {
+    const btn = document.createElement('button');
+    btn.className = 'primary';
+    btn.style.cssText = 'display:block;width:100%;text-align:left;margin-top:6px';
+    const have = builds[stem];
+    const tags = [have.blob ? 'blob' : null,
+                  have.tuning ? 'tuning' : null,
+                  have.inspection ? 'inspection' : null].filter(Boolean).join(' · ');
+    btn.textContent = `${stem}  (${tags})`;
+    btn.onclick = () => { overlay.remove(); loadBuild(stem, have); };
+    card.appendChild(btn);
+  }
+
+  const cancel = document.createElement('button');
+  cancel.textContent = 'Cancel';
+  cancel.style.cssText = 'margin-top:12px';
+  cancel.onclick = () => overlay.remove();
+  card.appendChild(cancel);
+
+  overlay.appendChild(card);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
+// ─── §COMPILE (in-browser, via Web Worker) ──────────────────────────────────────
+// A Web Worker runs the canonical hum toolchain under Pyodide so the UI never
+// blocks.  It produces the same artifacts a build folder does — tuning JSON,
+// inspection JSON and a .humblob — which we route through applyBuild() (UI); the device is
+// only touched on an explicit Flash click.  Requires the page to be served over
+// http(s); Pyodide cannot load from file://.
+let compileWorker  = null;
+let cachedNodeIndex = null;
+let compiling      = false;
+
+// The single source of truth for "what build is loaded in the UI".  Folder loads
+// and editor compiles both fill this via applyBuild(); the chip and Flash button
+// render from it.  Loading NEVER touches the device — Flash is the only path.
+const currentBuild = {
+  name: null,        // stem, tuning.project, or editor file name
+  source: null,      // 'folder' | 'editor'
+  blob: null,        // ArrayBuffer | null
+  checksum: null,    // uint32 from tuning.blob_checksum (null if no tuning)
+  hasTuning: false,
+  hasInspection: false,
+  dirHandle: null,   // build folder handle when source === 'folder' (for reload)
+  stem: null,        // build stem within that folder (for reload)
+};
+
+function compilerAvailable() {
+  return location.protocol === 'http:' || location.protocol === 'https:';
+}
+
+function hex32(n) { return (n >>> 0).toString(16).toUpperCase().padStart(8, '0'); }
+
+// Pull the project name from tuning JSON text without disturbing doc state
+// (applyBuild names the build before applyArtifacts has parsed it into doc).
+function tryProjectName(tuningText) {
+  try { return JSON.parse(tuningText).project || null; } catch (e) { return null; }
+}
+
+// Dedicated compile indicator — kept separate from the serial connection status
+// dot, since compiling is orthogonal to the device connection.
+function setCompileStatus(state, text) {
+  const el = document.getElementById('compile-status');
+  el.className = state || '';
+  el.textContent = text || '';
+}
+
+const HUM_BROWSER_ASSET_REV = 'phase4_2_devicefix1';
+
+function versionedAsset(name) {
+  const u = new URL(name, location.href);
+  u.searchParams.set('v', HUM_BROWSER_ASSET_REV);
+  return u.href;
+}
+
+function ensureWorker() {
+  if (compileWorker) return compileWorker;
+  compileWorker = new Worker(versionedAsset('hum_tune.worker.js'));
+  compileWorker.onmessage = onWorkerMessage;
+  compileWorker.onerror = (e) => {
+    compiling = false;
+    setCompileStatus('err', 'Compiler error');
+    addLog('✖ Worker: ' + (e.message || 'failed to load hum_tune.worker.js'), 'log-err');
+  };
+  return compileWorker;
+}
+
+function onWorkerMessage(ev) {
+  const m = ev.data || {};
+  if (m.type === 'progress') {
+    setCompileStatus('busy', m.msg);
+    addLog('… ' + m.msg, 'log-out');
+  } else if (m.type === 'ready') {
+    const b = m.buildInfo || {};
+    const rev = b.git_revision ? String(b.git_revision).slice(0, 8) + (b.git_dirty ? '-dirty' : '') : null;
+    const ver = b.hum_version && b.hum_version !== 'unknown' ? `Hum ${b.hum_version}` : 'Hum';
+    const abi = (b.blob_format_version != null && b.node_api_version != null)
+      ? `blob v${b.blob_format_version}/API v${b.node_api_version}` : null;
+    addLog('✓ Compiler ready — ' + [ver, abi, rev].filter(Boolean).join(', '), 'log-ok');
+    requestNodeIndex();   // worker booted (e.g. by a compile) — fetch nodes if not yet
+  } else if (m.type === 'nodes') {
+    // Node manifests for the editor's autocomplete — independent of compiling,
+    // so failures only log (they don't trip the compile error UI).
+    if (m.error) {
+      addLog('⚠ Node index unavailable: ' + m.error, 'log-err');
+      nodeIndexRequested = false;   // allow a later retry (re-open Editor tab / next compile)
+    } else {
+      const list = m.nodes || [];
+      cachedNodeIndex = list;
+      if (window.humEditor) window.humEditor.setNodeIndex(list);
+      addLog(`✓ Node index: ${list.length} types`, 'log-ok');
+    }
+  } else if (m.type === 'diagnostics') {
+    // Editor linter response — resolve the matching pending check (independent
+    // of the compile UI).
+    const resolve = pendingChecks.get(m.id);
+    if (resolve) { pendingChecks.delete(m.id); resolve(m.diagnostics || []); }
+  } else if (m.type === 'result') {
+    compiling = false;
+    if (pendingAICompileCheck) lastAICheck = { ...pendingAICompileCheck, diagnostics: [] };
+    pendingAICompileCheck = null;
+    // The compiled build becomes current; Flash lights up on a real mismatch.
+    applyBuild({
+      name:   (m.tuning ? tryProjectName(m.tuning) : null) || '(compiled)',
+      source: 'editor',
+      blob:   m.blob,          // transferred ArrayBuffer
+      tuningText:     m.tuning,
+      inspectionText: m.inspection,
+    });
+    for (const w of (m.warnings || [])) addLog('⚠ ' + w, 'log-err');
+    const bytes = m.blob.byteLength;
+    const cs = doc.tuning ? hex32(doc.tuning.blob_checksum) : '????????';
+    setCompileStatus('ok', `Compiled · ${bytes} B · ${cs}`);
+    addLog(`✓ Compiled blob (${bytes} bytes, checksum ${cs}).`, 'log-ok');
+    // Explain the compat state relative to whatever the device is running.
+    if (session.deviceInfo && doc.tuning) {
+      if (session.deviceInfo.blobChecksum === doc.tuning.blob_checksum) {
+        addLog('✓ Matches the blob on the device — tune now.', 'log-ok');
+      } else {
+        addLog(`→ Device runs ${hex32(session.deviceInfo.blobChecksum)}; Flash to ` +
+               `load this build before tuning.`, 'log-out');
+      }
+    }
+    activateTab('console');
+  } else if (m.type === 'error') {
+    compiling = false;
+    if (pendingAICompileCheck)
+      lastAICheck = { ...pendingAICompileCheck,
+        diagnostics: (m.errors || []).map(message => ({ code: m.phase || 'compile', message: String(message) })) };
+    pendingAICompileCheck = null;
+    setCompileStatus('err', 'Compile failed');
+    addLog(`✖ Compile failed (${m.phase}):`, 'log-err');
+    for (const e of (m.errors || [])) {
+      for (const line of String(e).split('\n')) addLog('   ' + line, 'log-err');
+    }
+    activateTab('console');
+  }
+}
+
+// Fetch the bundled node manifests for the editor's autocomplete.  Once-guarded;
+// boots Pyodide in the worker if it isn't already up (first Editor-tab open).
+let nodeIndexRequested = false;
+function requestNodeIndex() {
+  if (nodeIndexRequested) return;
+  if (!compilerAvailable()) return;   // needs http(s) for Pyodide; editor still edits offline
+  nodeIndexRequested = true;
+  addLog('… loading node index for autocomplete', 'log-out');
+  ensureWorker().postMessage({ type: 'listNodes' });
+}
+
+// Editor linter round-trip: post a check to the worker and resolve when its
+// matching `diagnostics` reply arrives (id-correlated; checks may overlap).
+const pendingChecks = new Map();
+let checkSeq = 0;
+function postCheck(msg) {
+  if (!compilerAvailable()) return Promise.resolve([]);
+  const id = ++checkSeq;
+  return new Promise(resolve => {
+    pendingChecks.set(id, resolve);
+    ensureWorker().postMessage(Object.assign({ id }, msg));
+    setTimeout(() => {              // safety net: never leave the linter hanging
+      if (pendingChecks.has(id)) { pendingChecks.delete(id); resolve(null); }
+    }, 60000);                      // generous: a cold Pyodide start can take many seconds
+  });
+}
+
+let pendingAICompileCheck = null;
+function startCompile(message) {
+  if (!compilerAvailable()) {
+    // Leave a trace in the Console too — an alert alone reads as "the button did
+    // nothing", especially for a freshly-created file's first compile.
+    addLog(`✖ Can't compile from ${location.protocol}// — serve over http(s) ` +
+           `(e.g. \`python -m http.server\` in this folder) and reload.`, 'log-err');
+    setCompileStatus('err', 'Needs http(s)');
+    alert('In-browser compiling requires the tool to be served over http(s).\n' +
+          'Pyodide cannot load from a file:// page. Serve this folder (e.g. ' +
+          '`python -m http.server`) and reload.');
+    return;
+  }
+  if (compiling) { addLog('… compile already in progress', 'log-out'); return; }
+  compiling = true;
+  // Capture exactly the files sent to the worker; later edits cannot turn a
+  // compile error into apparently current diagnostics for a different source.
+  pendingAICompileCheck = message.type === 'compileProject'
+    ? { kind: 'project', signature: aiTextFileSignature(message.files || {}) }
+    : message.type === 'compileSource'
+      ? { kind: 'source', signature: aiTextFileSignature({
+          [window.humEditor?.getActive()?.path || window.humEditor?.getActive()?.name || 'main.hum']: message.source || '' }) }
+      : null;
+  setCompileStatus('busy', 'Compiling…');
+  ensureWorker().postMessage(message);
+}
+
+// Recursively collect a project folder into { files: {relpath: text|Uint8Array},
+// handles: {relpath: FileSystemFileHandle} }.  Skips build output / generated
+// dirs and dotfiles; reads .hum/.toml as text (keeping a handle so the editor can
+// Save back) and other (small) files as bytes for load() params.
+async function collectProjectEntries(dir, prefix, out) {
+  const SKIP_DIRS = new Set(['build', 'inc', 'dist', '__pycache__', '.git']);
+  for await (const [name, h] of dir.entries()) {
+    if (name.startsWith('.')) continue;
+    const rel = prefix ? prefix + '/' + name : name;
+    if (h.kind === 'directory') {
+      if (SKIP_DIRS.has(name)) continue;
+      await collectProjectEntries(h, rel, out);
+    } else {
+      const f = await h.getFile();
+      if (name.endsWith('.hum') || name.endsWith('.toml')) {
+        out.files[rel]   = await f.text();
+        out.handles[rel] = h;
+      } else {
+        out.files[rel] = new Uint8Array(await f.arrayBuffer());
+      }
+    }
+  }
+  return out;
+}
+
+// ─── §PARAM UI ────────────────────────────────────────────────────────────────
+function renderParams() {
+  const content = document.getElementById('param-content');
+  content.innerHTML = '';
+
+  const groups = {};
+  for (const p of doc.tuning.params) {
+    if (p.mutable === 'const') continue;
+    (groups[p.node] = groups[p.node] || []).push(p);
+  }
+
+  if (Object.keys(groups).length === 0) {
+    const msg = document.createElement('div');
+    msg.style.cssText = 'padding:16px;color:#71717a';
+    msg.textContent = 'No tunable parameters found.';
+    content.appendChild(msg);
+    syncSelectionUI();
+    return;
+  }
+
+  for (const [nodeName, params] of Object.entries(groups)) {
+    const grp = document.createElement('div');
+    grp.className = 'node-group';
+    grp.dataset.nodeName = nodeName;
+    const runtimeNodeId = params.length ? Number(params[0].node_id) : null;
+    if (Number.isFinite(runtimeNodeId)) grp.dataset.runtimeNodeId = String(runtimeNodeId);
+
+    const hdr = document.createElement('div');
+    hdr.className = 'node-header';
+    const chevron = document.createElement('span');
+    chevron.className = 'node-chevron';
+    chevron.textContent = '▾';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = nodeName;
+    hdr.appendChild(chevron);
+    hdr.appendChild(nameSpan);
+    hdr.onclick = e => {
+      if (Number.isFinite(runtimeNodeId))
+        selectRuntimeNode(runtimeNodeId, { scrollParams: false, mode: selectionMode(e) });
+      const collapsed = !doc.collapsedParamNodes.has(nodeName);
+      if (collapsed) doc.collapsedParamNodes.add(nodeName);
+      else doc.collapsedParamNodes.delete(nodeName);
+      grp.querySelector('.node-params').classList.toggle('hidden', collapsed);
+      hdr.classList.toggle('collapsed', collapsed);
+    };
+    grp.appendChild(hdr);
+
+    const body = document.createElement('div');
+    body.className = 'node-params';
+    const collapsed = doc.collapsedParamNodes.has(nodeName);
+    body.classList.toggle('hidden', collapsed);
+    hdr.classList.toggle('collapsed', collapsed);
+    for (const p of params) body.appendChild(makeParamRow(p));
+    grp.appendChild(body);
+
+    content.appendChild(grp);
+  }
+  syncSelectionUI();
+  updateGraphedNames();
+}
+
+function makePinButton(p) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'param-pin';
+  // Inline SVG avoids platform-dependent emoji rendering, and the pressed
+  // state is styled via the .pinned class during selection/filter updates.
+  btn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <g class="pin-body">
+      <path class="pin-head" d="M9 3h6l-.75 3v3l1.75 3v1H8v-1l1.75-3V6Z"/>
+      <path class="pin-shaft" d="M12 13v8"/>
+    </g>
+    <path class="pin-surface" d="M7 18.5h10"/>
+  </svg>`;
+  btn.setAttribute('aria-label', `Pin ${p.name}`);
+  btn.setAttribute('aria-pressed', 'false');
+  btn.onclick = e => { e.stopPropagation(); togglePin(p.name); };
+  return btn;
+}
+
+function togglePin(name) {
+  if (doc.pinnedParams.has(name)) doc.pinnedParams.delete(name);
+  else doc.pinnedParams.add(name);
+  syncSelectionUI();
+}
+
+function makeParamRow(p) {
+  if (p.mutable === 'array') {
+    const row = document.createElement('div');
+    row.className = 'param-row-array';
+    row.dataset.name = p.name;
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'param-name';
+    nameEl.title = p.name;
+    const shortName = p.name.replace(p.node + '.', '');
+    const shortSpan = document.createTextNode(shortName);
+    const badge = document.createElement('span');
+    badge.className = 'mut-badge mut-array';
+    badge.textContent = `A[${p.count}]`;
+    nameEl.appendChild(shortSpan);
+    nameEl.appendChild(badge);
+    row.appendChild(nameEl);
+    row.appendChild(makePinButton(p));
+
+    const controls = document.createElement('div');
+    controls.className = 'param-array-controls';
+
+    const ta = document.createElement('textarea');
+    ta.className = 'param-array-textarea';
+    ta.rows = Math.min(4, Math.ceil((p.count || 1) / 4));
+    ta.value = (p.values || p.default || []).map(fmtVal).join(', ');
+    ta.dataset.name = p.name;
+    controls.appendChild(ta);
+
+    const btnRow = document.createElement('div');
+    btnRow.className = 'param-array-buttons';
+
+    const applyBtn = document.createElement('button');
+    applyBtn.className = 'param-array-btn primary';
+    applyBtn.textContent = 'Apply';
+    applyBtn.onclick = () => sendArray(p, ta.value);
+    btnRow.appendChild(applyBtn);
+
+    const refreshBtn = document.createElement('button');
+    refreshBtn.className = 'param-array-btn';
+    refreshBtn.textContent = '↺ Read';
+    refreshBtn.title = 'Read current values from device';
+    refreshBtn.onclick = () => refreshArray(p, ta);
+    btnRow.appendChild(refreshBtn);
+
+    controls.appendChild(btnRow);
+    row.appendChild(controls);
+    return row;
+  }
+
+  const hasRange = p.min !== null && p.min !== undefined &&
+                   p.max !== null && p.max !== undefined;
+  const row = document.createElement('div');
+  row.className = 'param-row';
+  row.dataset.name = p.name;
+
+  const nameEl = document.createElement('div');
+  nameEl.className = 'param-name';
+  nameEl.title = p.name;
+  const shortName = p.name.replace(p.node + '.', '');
+  nameEl.appendChild(document.createTextNode(shortName));
+  const badge = document.createElement('span');
+  badge.className = `mut-badge mut-${p.mutable}`;
+  badge.textContent = p.mutable[0].toUpperCase();
+  nameEl.appendChild(badge);
+  nameEl.onclick = () => toggleGraph(p.name);
+  row.appendChild(nameEl);
+  row.appendChild(makePinButton(p));
+
+  if (hasRange) {
+    const slider = document.createElement('input');
+    slider.type      = 'range';
+    slider.className = 'param-slider';
+    slider.min   = p.min;
+    slider.max   = p.max;
+    slider.step  = 'any';
+    slider.value = p.default;
+    slider.dataset.name = p.name;
+    slider.onchange = () => onSliderCommit(p.name, parseFloat(slider.value));
+    row.appendChild(slider);
+  } else {
+    const ph = document.createElement('div');
+    ph.className = 'param-slider-placeholder';
+    ph.textContent = '(no range)';
+    row.appendChild(ph);
+  }
+
+  const numEl = document.createElement('input');
+  numEl.type      = 'number';
+  numEl.className = 'param-input';
+  numEl.value     = fmtVal(p.default);
+  if (hasRange) { numEl.min = p.min; numEl.max = p.max; }
+  numEl.step = hasRange ? (p.max - p.min) / 1000 : 'any';
+  numEl.dataset.name = p.name;
+  numEl.onkeydown = e => { if (e.key === 'Enter') numEl.blur(); };
+  numEl.onblur    = () => onNumInput(p.name, parseFloat(numEl.value));
+  row.appendChild(numEl);
+
+  return row;
+}
+
+function fmtVal(v) {
+  if (v === undefined || v === null || isNaN(v)) return '0';
+  if (Math.abs(v) < 0.001 && v !== 0) return v.toExponential(3);
+  if (Math.abs(v) >= 10000) return v.toExponential(3);
+  return parseFloat(v.toPrecision(5)).toString();
+}
+
+function clamp(v, lo, hi) {
+  if (lo !== null && lo !== undefined && v < lo) return lo;
+  if (hi !== null && hi !== undefined && v > hi) return hi;
+  return v;
+}
+
+// ─── §ARRAY HELPERS ───────────────────────────────────────────────────────────
+let pendingArraySend    = null;
+let pendingGetArray     = null;
+let pendingBlobSend     = null;
+
+function sendBlob(arrayBuffer) {
+  pendingBlobSend = arrayBuffer;
+  enqueue(`LOAD ${arrayBuffer.byteLength}`, 'LOAD');
+}
+
+function sendArray(p, csvText) {
+  if (webHost) { addLog('⚠ Array tuning is not available in hum-web V1', 'log-err'); return; }
+  const vals = csvText.split(',')
+                      .map(s => parseFloat(s.trim()))
+                      .filter(v => !isNaN(v));
+  if (vals.length !== p.count) {
+    addLog(`✖ SET_ARRAY ${p.name}: expected ${p.count} values, got ${vals.length}`, 'log-err');
+    return;
+  }
+  const buf = new ArrayBuffer(vals.length * 4);
+  const dv  = new DataView(buf);
+  vals.forEach((v, i) => dv.setFloat32(i * 4, v, true));
+  pendingArraySend = { buf, nodeId: p.node_id, paramId: p.param_id };
+  enqueue(`SET_ARRAY ${p.node_id} ${p.param_id} ${vals.length}`, `SET_ARRAY:${p.name}`);
+}
+
+function refreshArray(p, ta) {
+  if (webHost) { addLog('⚠ Array reading is not available in hum-web V1', 'log-err'); return; }
+  pendingGetArray = { p, ta, vals: [] };
+  enqueue(`GET_ARRAY ${p.node_id} ${p.param_id}`, `GET_ARRAY:${p.name}`);
+}
+
+// ─── §CONTROL CALLBACKS ───────────────────────────────────────────────────────
+function onSliderCommit(name, val) {
+  updateDisplay(name, val);
+  sendParam(name, val);
+}
+
+function onNumInput(name, val) {
+  if (isNaN(val)) return;
+  const p = doc.paramMap[name];
+  if (!p) return;
+  val = clamp(val, p.min, p.max);
+  updateDisplay(name, val);
+  sendParam(name, val);
+}
+
+function sendParam(name, val) {
+  const p = doc.paramMap[name];
+  if (!p) return;
+  p.value = val;
+  enqueue(`SET ${p.node_id} ${p.param_id} ${val}`, `SET:${name}`);
+}
+
+function updateDisplay(name, val) {
+  const p = doc.paramMap[name];
+  if (!p) return;
+  p.value = val;
+  const row = document.querySelector(`.param-row[data-name="${CSS.escape(name)}"]`);
+  if (!row) return;
+  const slider = row.querySelector('.param-slider');
+  if (slider) slider.value = val;
+  const numEl = row.querySelector('.param-input');
+  if (numEl && document.activeElement !== numEl) numEl.value = fmtVal(val);
+}
+
+// ─── §GRAPH ───────────────────────────────────────────────────────────────────
+function toggleGraph(name) {
+  const idx = doc.graphSeries.findIndex(g => g.name === name);
+  if (idx !== -1) {
+    doc.graphSeries.splice(idx, 1);
+  } else {
+    if (doc.graphSeries.length >= 4) {
+      addLog('Graph: max 4 params. Remove one first.', 'log-err');
+      return;
+    }
+    const usedColors = new Set(doc.graphSeries.map(g => g.color));
+    const color = GRAPH_COLORS.find(c => !usedColors.has(c)) || GRAPH_COLORS[0];
+    if (!graphStart) graphStart = Date.now();
+    const p = doc.paramMap[name];
+    const t = (Date.now() - graphStart) / 1000;
+    const poll = p
+      ? { cmd: Protocol.fmt.get(p.node_id, p.param_id), coalesceKey: `GET:${name}` }
+      : null;
+    doc.graphSeries.push({ name, color, poll, history: [{ t, v: p ? p.value : 0 }] });
+  }
+  updateGraphLegend();
+  updateGraphedNames();
+  if (doc.graphSeries.length > 0 && !pollTimer) {
+    pollTimer = setInterval(pollGraphed, 200);
+  } else if (doc.graphSeries.length === 0 && pollTimer) {
+    clearInterval(pollTimer); pollTimer = null;
+  }
+}
+
+function pollGraphed() {
+  if (!writer) return;
+  for (const g of doc.graphSeries) {
+    if (g.poll) enqueue(g.poll.cmd, g.poll.coalesceKey);
+  }
+}
+
+function pruneHistory(g) {
+  if (!graphStart) return;
+  const cutoff = (Date.now() - graphStart) / 1000 - GRAPH_WINDOW;
+  while (g.history.length > 1 && g.history[0].t < cutoff) g.history.shift();
+}
+
+function updateGraphedNames() {
+  const names = new Set(doc.graphSeries.map(g => g.name));
+  document.querySelectorAll('.param-name').forEach(el => {
+    const row  = el.closest('.param-row');
+    const name = row && row.dataset.name;
+    el.classList.toggle('graphed', !!(name && names.has(name)));
+  });
+}
+
+function updateGraphLegend() {
+  const legend = document.getElementById('graph-legend');
+  legend.textContent = '';
+  for (const g of doc.graphSeries) {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    const dot = document.createElement('div');
+    dot.className = 'legend-dot';
+    dot.style.background = g.color;
+    const label = document.createElement('span');
+    label.textContent = g.name;
+    item.appendChild(dot);
+    item.appendChild(label);
+    item.onclick = () => toggleGraph(g.name);
+    legend.appendChild(item);
+  }
+}
+
+// ─── §GRAPH CANVAS ────────────────────────────────────────────────────────────
+const canvas = document.getElementById('graph-canvas');
+const gctx   = canvas.getContext('2d');
+
+function renderGraph() {
+  animFrame = requestAnimationFrame(renderGraph);
+  const W = canvas.clientWidth;
+  const H = canvas.clientHeight;
+  if (W === 0 || H === 0) return; // pane hidden
+  if (canvas.width !== W || canvas.height !== H) {
+    canvas.width = W; canvas.height = H;
+  }
+  gctx.clearRect(0, 0, W, H);
+
+  if (doc.graphSeries.length === 0 || !graphStart) {
+    gctx.fillStyle = '#3f3f46';
+    gctx.font = '13px system-ui';
+    gctx.textAlign = 'center';
+    gctx.fillText('Click a parameter name to plot it here', W / 2, H / 2);
+    return;
+  }
+
+  const now  = (Date.now() - graphStart) / 1000;
+  const tMax = now;
+  const tMin = now - GRAPH_WINDOW;
+
+  gctx.strokeStyle = '#2a2a32';
+  gctx.lineWidth   = 1;
+  for (let i = 0; i <= 6; i++) {
+    const x = (i / 6) * W;
+    gctx.beginPath(); gctx.moveTo(x, 0); gctx.lineTo(x, H); gctx.stroke();
+  }
+
+  const PAD = 28;
+  for (const g of doc.graphSeries) {
+    if (g.history.length < 2) continue;
+    pruneHistory(g);
+
+    let vMin = Infinity, vMax = -Infinity;
+    for (const pt of g.history) { if (pt.v < vMin) vMin = pt.v; if (pt.v > vMax) vMax = pt.v; }
+    if (vMin === vMax) { vMin -= 0.001; vMax += 0.001; }
+    const p = doc.paramMap[g.name];
+    if (p && p.min != null) vMin = Math.min(vMin, p.min);
+    if (p && p.max != null) vMax = Math.max(vMax, p.max);
+
+    const toX = t => PAD + (t  - tMin) / (tMax - tMin) * (W - PAD * 2);
+    const toY = v => PAD + (1  - (v - vMin) / (vMax - vMin)) * (H - PAD * 2);
+
+    gctx.fillStyle  = g.color;
+    gctx.font       = '10px monospace';
+    gctx.textAlign  = 'right';
+    gctx.fillText(fmtVal(vMax), PAD - 4, PAD + 4);
+    gctx.fillText(fmtVal(vMin), PAD - 4, H - PAD + 4);
+
+    gctx.beginPath();
+    gctx.strokeStyle = g.color;
+    gctx.lineWidth   = 1.5;
+    gctx.lineJoin    = 'round';
+    let first = true;
+    for (const pt of g.history) {
+      const x = toX(pt.t), y = toY(pt.v);
+      first ? gctx.moveTo(x, y) : gctx.lineTo(x, y);
+      first = false;
+    }
+    gctx.stroke();
+  }
+
+  gctx.fillStyle  = '#52525b';
+  gctx.font       = '10px monospace';
+  gctx.textAlign  = 'center';
+  gctx.fillText('-' + GRAPH_WINDOW + 's', PAD, H - 4);
+  gctx.fillText('now', W - PAD, H - 4);
+}
+renderGraph();
+
+// ─── §PROFILE ─────────────────────────────────────────────────────────────────
+function renderProfile() {
+  const hdr = document.getElementById('profile-header');
+  hdr.textContent = session.profileBudget > 0
+    ? `DSP Profile · Budget: ${session.profileBudget.toLocaleString()} cycles/block`
+    : 'DSP Profile';
+
+  const rows = document.getElementById('profile-rows');
+  rows.textContent = '';
+
+  const nodeNames = {};
+  if (doc.inspection) {
+    for (const n of (doc.inspection.nodes || []))
+      nodeNames[n.runtime_node_id] = n.instance_path || n.instance_name;
+  } else if (doc.tuning) {
+    if (doc.tuning.nodes) {
+      for (const n of doc.tuning.nodes) nodeNames[n.node_id] = n.node;
+    } else {
+      for (const p of doc.tuning.params) nodeNames[p.node_id] = p.node;
+    }
+  }
+
+  const ids = Object.keys(session.profileData).map(Number).sort((a, b) => a - b);
+  for (const id of ids) {
+    const cyc  = session.profileData[id] || 0;
+    const pct  = session.profileBudget > 0 ? (cyc / session.profileBudget * 100) : 0;
+    const name = nodeNames[id] ?? `node ${id}`;
+
+    const row = document.createElement('div');
+    row.className = 'prof-row';
+    row.dataset.runtimeNodeId = String(id);
+    row.classList.toggle('selected', selectedRuntimeNodeIds().has(id));
+    row.onclick = e => selectRuntimeNode(id, { mode: selectionMode(e) });
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'prof-name';
+    nameEl.title = name;
+    nameEl.textContent = name;
+
+    const barTrack = document.createElement('div');
+    barTrack.className = 'prof-bar-track';
+    const barFill = document.createElement('div');
+    barFill.className = 'prof-bar-fill';
+    barFill.style.width = Math.min(pct, 100).toFixed(1) + '%';
+    barTrack.appendChild(barFill);
+
+    const cyclesEl = document.createElement('div');
+    cyclesEl.className = 'prof-cycles';
+    cyclesEl.textContent = cyc.toLocaleString();
+
+    const pctEl = document.createElement('div');
+    pctEl.className = 'prof-pct';
+    pctEl.textContent = pct.toFixed(1) + '%';
+
+    row.appendChild(nameEl);
+    row.appendChild(barTrack);
+    row.appendChild(cyclesEl);
+    row.appendChild(pctEl);
+    rows.appendChild(row);
+  }
+
+  if (activeTab !== 'profile') activateTab('profile');
+}
+
+// ─── §SHARED SELECTION & PARAM VISIBILITY ────────────────────────────────────
+// Graph, source, tuning and profiler all read this single selection model.
+// Node IDs are graph IDs ("node:N", "subgraph:path", "gin:N", "gout:N").
+function selectionMode(e) {
+  return e && (e.ctrlKey || e.metaKey) ? 'toggle'
+       : e && e.shiftKey ? 'add' : 'replace';
+}
+
+function selectedRuntimeNodeIds() {
+  const ids = new Set();
+  for (const id of doc.selection.nodeIds) {
+    if (id.startsWith('node:')) {
+      const n = Number(id.slice(5));
+      if (Number.isFinite(n)) ids.add(n);
+    } else if (id.startsWith('subgraph:') && doc.inspection) {
+      // Selecting a collapsed subgraph still exposes its descendants' tuning.
+      const prefix = id.slice('subgraph:'.length) + '.';
+      for (const n of doc.inspection.nodes || [])
+        if (n.instance_path?.startsWith(prefix)) ids.add(Number(n.runtime_node_id));
+    }
+  }
+  return ids;
+}
+
+function selectedSourceSpans() {
+  if (!doc.inspection) return [];
+  const spans = [];
+  for (const id of doc.selection.nodeIds) {
+    const node = graphViewNodeById(id);
+    if (node?.source) spans.push(node.source);
+    else if (id.startsWith('node:')) {
+      const n = inspectionNodeByRuntimeId(Number(id.slice(5)));
+      if (n?.source) spans.push(n.source);
+    } else if (id.startsWith('subgraph:')) {
+      const sub = (doc.inspection.subgraphs || [])
+        .find(s => s.instance_path === id.slice('subgraph:'.length));
+      if (sub?.source) spans.push(sub.source);
+    }
+  }
+  if (doc.selection.connectionId !== null) {
+    const c = (doc.inspection.connections || [])
+      .find(c => c.connection_id === doc.selection.connectionId);
+    if (c?.source) spans.push(c.source);
+  }
+  return spans;
+}
+
+function filterParams(query) {
+  const q = String(query || '').trim().toLowerCase();
+  const selected = selectedRuntimeNodeIds();
+  const contextual = doc.selection.nodeIds.size > 0 || doc.selection.connectionId !== null;
+  let visibleCount = 0;
+  document.querySelectorAll('#param-content .node-group').forEach(grp => {
+    const nid = Number(grp.dataset.runtimeNodeId);
+    const selectedGroup = selected.has(nid);
+    const nodeMatch = !q || grp.dataset.nodeName.toLowerCase().includes(q);
+    let visible = 0;
+    grp.querySelectorAll('.param-row, .param-row-array').forEach(row => {
+      const pinned = doc.pinnedParams.has(row.dataset.name);
+      const scopeMatch = !contextual || selectedGroup || pinned;
+      const searchMatch = nodeMatch || row.dataset.name.toLowerCase().includes(q);
+      const show = scopeMatch && searchMatch;
+      row.style.display = show ? '' : 'none';
+      row.classList.toggle('pinned', pinned);
+      const btn = row.querySelector('.param-pin');
+      if (btn) {
+        btn.classList.toggle('pinned', pinned);
+        btn.setAttribute('aria-pressed', String(pinned));
+        btn.setAttribute('aria-label', `${pinned ? 'Unpin' : 'Pin'} ${row.dataset.name}`);
+        btn.title = `${pinned ? 'Unpin' : 'Pin'} ${row.dataset.name}`;
+      }
+      if (show) { visible++; visibleCount++; }
+    });
+    grp.style.display = visible ? '' : 'none';
+  });
+  const empty = document.getElementById('param-filter-empty');
+  if (empty) empty.remove();
+  if (!visibleCount && doc.tuning &&
+      document.querySelectorAll('#param-content .node-group').length > 0) {
+    const msg = document.createElement('div');
+    msg.id = 'param-filter-empty';
+    msg.style.cssText = 'padding:16px;color:#a1a1aa;font-size:12px';
+    msg.textContent = contextual
+      ? 'No parameters for this selection. Pin parameters or clear the selection.'
+      : 'No parameters match the search.';
+    document.getElementById('param-content').appendChild(msg);
+  }
+}
+
+function syncSelectionUI({ scrollParams = false } = {}) {
+  const selected = selectedRuntimeNodeIds();
+  let firstGroup = null;
+  document.querySelectorAll('#param-content .node-group').forEach(grp => {
+    const nid = Number(grp.dataset.runtimeNodeId);
+    const on = selected.has(nid);
+    grp.classList.toggle('selected', on);
+    if (on && !firstGroup) firstGroup = grp;
+  });
+  document.querySelectorAll('#profile-rows .prof-row').forEach(row =>
+    row.classList.toggle('selected', selected.has(Number(row.dataset.runtimeNodeId))));
+  const count = doc.selection.nodeIds.size;
+  const conn = doc.selection.connectionId !== null;
+  document.getElementById('param-scope-label').textContent = count
+    ? `${count} selected node${count === 1 ? '' : 's'} · ${doc.pinnedParams.size} pinned`
+    : conn ? `Connection selected · ${doc.pinnedParams.size} pinned`
+    : `All parameters · ${doc.pinnedParams.size} pinned`;
+  document.getElementById('btn-clear-selection').disabled = !count && !conn;
+  document.getElementById('btn-clear-pins').disabled = doc.pinnedParams.size === 0;
+  filterParams(document.getElementById('param-search').value);
+  if (scrollParams && firstGroup && firstGroup.style.display !== 'none')
+    firstGroup.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  window.humEditor?.setLinkedSelections?.(selectedSourceSpans());
+  if (activeTab === 'graphview') renderGraphView();
+}
+
+function setNodeSelection(id, { mode = 'replace', scrollParams = false, revealGraph = false } = {}) {
+  const sel = doc.selection;
+  if (mode === 'replace') sel.nodeIds.clear();
+  if (id !== null && id !== undefined) {
+    if (mode === 'toggle' && sel.nodeIds.has(id)) sel.nodeIds.delete(id);
+    else sel.nodeIds.add(id);
+  }
+  sel.primaryNodeId = sel.nodeIds.has(id) ? id : ([...sel.nodeIds].at(-1) || null);
+  sel.connectionId = null;
+  if (revealGraph && id?.startsWith('node:')) {
+    const src = inspectionNodeByRuntimeId(Number(id.slice(5)));
+    if (src && addAncestorExpansions(src.instance_path))
+      rebuildGraphModel({ preserveView: true });
+  }
+  syncSelectionUI({ scrollParams });
+}
+
+function selectRuntimeNode(runtimeNodeId, { scrollParams = true, revealGraph = true, mode = 'replace' } = {}) {
+  const id = Number(runtimeNodeId);
+  setNodeSelection(Number.isFinite(id) ? `node:${id}` : null,
+    { mode, scrollParams, revealGraph });
+}
+
+function clearSelection() { setNodeSelection(null); }
+
+// ─── §GRAPHVIEW ───────────────────────────────────────────────────────────────
+let gvZoom = 1, gvPanX = 0, gvPanY = 0;
+let gvDragging = false, gvDragLast = null, gvDragged = false;
+// Initial layout prioritizes readable text. The explicit Fit Graph action fits
+// everything even when the resulting overview is necessarily small.
+let gvPendingFit = 'readable';
+
+function normSourcePath(path) {
+  return String(path || '').replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+function sameSourceFile(a, b) {
+  const aa = normSourcePath(a), bb = normSourcePath(b);
+  if (aa === bb) return true;
+  if (!editorProject && aa && bb && aa.endsWith('.hum') && bb.endsWith('.hum')) return true;
+  return false;
+}
+
+function sourceContains(span, loc) {
+  if (!span || !loc || !sameSourceFile(span.file, loc.path)) return false;
+  const line = Number(loc.line) || 1, col = Number(loc.column) || 1;
+  if (line < span.line || line > span.end_line) return false;
+  if (line === span.line && col < span.column) return false;
+  if (line === span.end_line && col > span.end_column) return false;
+  return true;
+}
+
+function spanWeight(span) {
+  if (!span) return Number.MAX_SAFE_INTEGER;
+  return Math.max(0, span.end_line - span.line) * 10000 + Math.max(0, span.end_column - span.column);
+}
+
+function expandInspectionPorts(specs) {
+  const ports = [];
+  for (const p of (specs || [])) {
+    if (p.variadic) {
+      const count = Math.max(0, p.resolved_count || 0);
+      for (let slot = 0; slot < count; slot++) {
+        ports.push({ runtimeIndex: slot, name: p.name, label: `${p.name}[${slot}]`, slot,
+                     dataType: p.data_type, channels: p.channels });
+      }
+    } else {
+      ports.push({ runtimeIndex: p.index ?? ports.length, name: p.name, label: p.name,
+                   slot: null, dataType: p.data_type, channels: p.channels });
+    }
+  }
+  return ports;
+}
+
+function graphPinPorts(specs) {
+  return (specs || []).map((p, i) => ({
+    runtimeIndex: p.index ?? i,
+    name: p.name,
+    label: p.name,
+    slot: null,
+    dataType: p.data_type,
+    channels: p.channels,
+  }));
+}
+
+function graphViewNodeById(id) {
+  if (!doc.graphModel || !id) return null;
+  return doc.graphModel.nodeById.get(id) || null;
+}
+
+function inspectionNodeByRuntimeId(id) {
+  if (!doc.inspection) return null;
+  return (doc.inspection.nodes || []).find(n => Number(n.runtime_node_id) === Number(id)) || null;
+}
+
+function addAncestorExpansions(instancePath) {
+  if (!doc.inspection || !instancePath) return false;
+  const byPath = new Map((doc.inspection.subgraphs || []).map(s => [s.instance_path, s]));
+  let path = instancePath;
+  let changed = false;
+  // If this is a leaf path, start at its parent. If it is a subgraph path, the
+  // caller decides whether the subgraph itself should expand by passing parent.
+  const leaf = (doc.inspection.nodes || []).find(n => n.instance_path === path);
+  if (leaf) path = leaf.parent_path;
+  while (path) {
+    if (byPath.has(path) && !doc.expandedSubgraphs.has(path)) {
+      doc.expandedSubgraphs.add(path);
+      changed = true;
+    }
+    path = byPath.get(path)?.parent_path || null;
+  }
+  return changed;
+}
+
+function sourceEndpointPinIndex(node, ep, dir) {
+  const ports = (node.ports && node.ports[dir]) || [];
+  if (!ep) return 0;
+  if (ep.slot !== null && ep.slot !== undefined) {
+    const hit = ports.findIndex(p => p.name === ep.pin_name && Number(p.slot) === Number(ep.slot));
+    if (hit >= 0) return hit;
+  }
+  const hit = ports.findIndex(p => p.name === ep.pin_name);
+  return hit >= 0 ? hit : 0;
+}
+
+function buildInspectionGraphModel(data) {
+  const leafByPath = new Map();
+  const subgraphByPath = new Map();
+  const nodeById = new Map();
+  const connectionsByScope = new Map();
+
+  for (const n of (data.nodes || [])) leafByPath.set(n.instance_path, n);
+  for (const s of (data.subgraphs || [])) subgraphByPath.set(s.instance_path, s);
+  for (const c of (data.connections || [])) {
+    const key = c.instance_path || '';
+    if (!connectionsByScope.has(key)) connectionsByScope.set(key, []);
+    connectionsByScope.get(key).push(c);
+  }
+
+  function makeLeaf(n) {
+    const node = {
+      id: `node:${n.runtime_node_id}`,
+      kind: 'node', runtimeNodeId: n.runtime_node_id,
+      name: n.instance_name, instanceName: n.instance_name, instancePath: n.instance_path,
+      type: n.type_name || n.fqn || 'node', fqn: n.fqn || n.type_name || '',
+      scheduleIndex: n.schedule_index, source: n.source || null,
+      ports: { in: expandInspectionPorts(n.inputs), out: expandInspectionPorts(n.outputs) },
+      params: (n.params || []).filter(p => p.mutable !== 'const').map(p => p.name),
+      expanded: false, scope: null,
+    };
+    nodeById.set(node.id, node);
+    return node;
+  }
+
+  function makeSubgraph(s) {
+    const expanded = doc.expandedSubgraphs.has(s.instance_path);
+    const node = {
+      id: `subgraph:${s.instance_path}`,
+      kind: 'subgraph', runtimeNodeId: null,
+      name: s.instance_name, instanceName: s.instance_name, instancePath: s.instance_path,
+      type: s.type_name, fqn: s.type_name, scheduleIndex: -1,
+      source: s.source || null, definitionSource: s.definition_source || null,
+      ports: { in: graphPinPorts(s.inputs), out: graphPinPorts(s.outputs) },
+      params: [], expanded, scope: null,
+    };
+    nodeById.set(node.id, node);
+    if (expanded)
+      node.scope = buildScope(s.instance_path, s.type_name, s.inputs || [], s.outputs || [], false);
+    return node;
+  }
+
+  function boundaryNode(pin, dir) {
+    const input = dir === 'in';
+    const id = `${input ? 'gin' : 'gout'}:${pin.index}`;
+    const node = {
+      id, kind: input ? 'graph_input' : 'graph_output', runtimeNodeId: null,
+      name: pin.name, instanceName: pin.name, instancePath: null,
+      type: input ? 'graph input' : 'graph output', fqn: '', scheduleIndex: -1,
+      source: pin.source || null,
+      ports: input
+        ? { in: [], out: [{ runtimeIndex: 0, name: pin.name, label: pin.name, slot: null,
+                            dataType: pin.data_type, channels: pin.channels }] }
+        : { in: [{ runtimeIndex: 0, name: pin.name, label: pin.name, slot: null,
+                   dataType: pin.data_type, channels: pin.channels }], out: [] },
+      params: [], expanded: false, scope: null,
+    };
+    nodeById.set(id, node);
+    return node;
+  }
+
+  function endpoint(scope, ep, dir) {
+    if (!ep) return null;
+    if (ep.kind === 'graph_input') {
+      if (scope.isRoot) {
+        const idx = scope.inputs.findIndex(p => p.name === ep.pin_name);
+        return { kind: 'node', nodeId: `gin:${Math.max(0, idx)}`, pin: 0 };
+      }
+      const idx = scope.inputs.findIndex(p => p.name === ep.pin_name);
+      return { kind: 'scope_input', pin: Math.max(0, idx), pinName: ep.pin_name };
+    }
+    if (ep.kind === 'graph_output') {
+      if (scope.isRoot) {
+        const idx = scope.outputs.findIndex(p => p.name === ep.pin_name);
+        return { kind: 'node', nodeId: `gout:${Math.max(0, idx)}`, pin: 0 };
+      }
+      const idx = scope.outputs.findIndex(p => p.name === ep.pin_name);
+      return { kind: 'scope_output', pin: Math.max(0, idx), pinName: ep.pin_name };
+    }
+    if (ep.kind === 'node') {
+      const leaf = leafByPath.get(ep.instance_path);
+      const sub = subgraphByPath.get(ep.instance_path);
+      const nodeId = leaf ? `node:${leaf.runtime_node_id}` : sub ? `subgraph:${sub.instance_path}` : null;
+      const node = nodeId ? nodeById.get(nodeId) : null;
+      if (!nodeId || !node) return null;
+      return { kind: 'node', nodeId, pin: sourceEndpointPinIndex(node, ep, dir) };
+    }
+    return null;
+  }
+
+  function buildScope(scopePath, graphName, inputs, outputs, isRoot) {
+    const scope = {
+      scopePath: scopePath || null, graphName, inputs, outputs, isRoot,
+      nodes: [], edges: [], _layout: null,
+    };
+
+    if (isRoot) {
+      for (const p of inputs) scope.nodes.push(boundaryNode(p, 'in'));
+    }
+    const directLeaves = (data.nodes || []).filter(n => (n.parent_path || null) === (scopePath || null));
+    const directSubs = (data.subgraphs || []).filter(s => (s.parent_path || null) === (scopePath || null));
+    for (const n of directLeaves) scope.nodes.push(makeLeaf(n));
+    for (const s of directSubs) scope.nodes.push(makeSubgraph(s));
+    if (isRoot) {
+      for (const p of outputs) scope.nodes.push(boundaryNode(p, 'out'));
+    }
+
+    const conns = (connectionsByScope.get(scopePath || '') || [])
+      .filter(c => !graphName || c.source_graph === graphName);
+    for (const c of conns) {
+      const from = endpoint(scope, c.source_endpoint, 'out');
+      const to = endpoint(scope, c.destination_endpoint, 'in');
+      if (!from || !to) continue;
+      scope.edges.push({
+        id: `conn:${c.connection_id}:${scopePath || 'root'}`,
+        connectionId: c.connection_id,
+        from, to,
+        feedback: !!c.feedback,
+        source: c.source || null,
+      });
+    }
+    return scope;
+  }
+
+  const rootGraph = (data.graphs || []).find(g => g.name === 'main') || (data.graphs || [])[0] || null;
+  const rootInputs = data.graph_inputs || (rootGraph ? rootGraph.inputs : []) || [];
+  const rootOutputs = data.graph_outputs || (rootGraph ? rootGraph.outputs : []) || [];
+  const root = buildScope(null, rootGraph ? rootGraph.name : 'main', rootInputs, rootOutputs, true);
+  return {
+    root, nodeById, leafByPath, subgraphByPath,
+    semantic: true, schemaVersion: data.schema_version,
+    _layout: null, _hitNodes: [], _hitEdges: [],
+  };
+}
+
+// ── Legible graph geometry and obstacle-aware routing ───────────────────────
+// Dimensions are world-space CSS pixels. The renderer scales all text and
+// geometry together, and uses a high-DPI backing canvas for crisp labels.
+const GV = Object.freeze({
+  margin: 60, columnGap: 118, rowGap: 48, pinPitch: 24, firstPin: 72,
+  innerX: 80, innerTop: 92, innerBottom: 56, stub: 22, clearance: 10,
+});
+
+function nodeBaseSize(node) {
+  const ins = (node.ports?.in || []), outs = (node.ports?.out || []);
+  const chars = str => [...String(str || '')].length;
+  const longest = pins => Math.max(0, ...pins.map(p => chars(p.label)));
+  const boundary = node.kind === 'graph_input' || node.kind === 'graph_output';
+  const title = chars(node.name) * 8.0 + (node.runtimeNodeId !== null ? 108 : 72);
+  const type = chars(node.type) * 6.4 + 36;
+  const ports = longest(ins) * 6.9 + longest(outs) * 6.9 + 74;
+  const width = Math.max(boundary ? 190 : 232, Math.min(460, Math.max(title, type, ports)));
+  const height = Math.max(112, GV.firstPin + (Math.max(1, ins.length, outs.length) - 1) * GV.pinPitch + 36);
+  return { width: Math.ceil(width), height };
+}
+
+function scopeNodeId(endpoint) {
+  return endpoint && endpoint.kind === 'node' ? endpoint.nodeId : null;
+}
+
+function layoutScope(scope) {
+  // Expanded subgraph sizes are bottom-up, using the same layout as a root.
+  for (const node of scope.nodes) {
+    const base = nodeBaseSize(node);
+    node._width = base.width; node._height = base.height;
+    if (node.kind === 'subgraph' && node.expanded && node.scope) {
+      layoutScope(node.scope);
+      node._innerX = GV.innerX;
+      node._innerY = GV.innerTop;
+      node._width = Math.max(base.width, node.scope._layout.width + GV.innerX * 2);
+      node._height = Math.max(base.height, GV.innerTop + node.scope._layout.height + GV.innerBottom);
+    }
+  }
+  // Longest-path ranks for a forward DAG; feedback does not affect ranks.
+  const ids = scope.nodes.map(n => n.id), byId = new Map(scope.nodes.map(n => [n.id, n]));
+  const ranks = new Map(ids.map(id => [id, 0]));
+  const out = new Map(ids.map(id => [id, []]));
+  const indegree = new Map(ids.map(id => [id, 0]));
+  const fwd = scope.edges.filter(e => !e.feedback);
+  for (const e of fwd) {
+    const a = scopeNodeId(e.from), b = scopeNodeId(e.to);
+    if (byId.has(a) && byId.has(b) && a !== b) {
+      out.get(a).push(b); indegree.set(b, indegree.get(b) + 1);
+    }
+  }
+  const q = ids.filter(id => indegree.get(id) === 0);
+  for (let i = 0; i < q.length; i++) {
+    const id = q[i];
+    for (const b of out.get(id)) {
+      ranks.set(b, Math.max(ranks.get(b), ranks.get(id) + 1));
+      indegree.set(b, indegree.get(b) - 1);
+      if (!indegree.get(b)) q.push(b);
+    }
+  }
+  // Keep graph input and output boundaries outside the authored graph.
+  if (scope.isRoot && scope.nodes.some(n => n.kind === 'graph_input')) {
+    for (const n of scope.nodes) if (n.kind !== 'graph_input') ranks.set(n.id, ranks.get(n.id) + 1);
+  }
+  if (scope.isRoot) {
+    const last = Math.max(0, ...scope.nodes.filter(n => n.kind !== 'graph_output').map(n => ranks.get(n.id)));
+    for (const n of scope.nodes) if (n.kind === 'graph_output') ranks.set(n.id, last + 1);
+  }
+  const groups = new Map();
+  for (const n of scope.nodes) {
+    const r = ranks.get(n.id);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(n);
+  }
+  const cols = [...groups.keys()].sort((a,b) => a-b);
+  const stableOrder = n => n.kind === 'node' ? Number(n.runtimeNodeId) : String(n.instancePath || n.name);
+  for (const group of groups.values()) group.sort((a,b) => {
+    const aa=stableOrder(a), bb=stableOrder(b);
+    return typeof aa==='number' && typeof bb==='number' ? aa-bb : String(aa).localeCompare(String(bb));
+  });
+  // Barycentric passes reduce crossing on branching/fanout graphs without a
+  // graph-layout dependency. Root input/output pin order remains canonical.
+  function sweep(forward) {
+    const ordered = forward ? cols : [...cols].reverse();
+    for (const rank of ordered) {
+      const group = groups.get(rank);
+      if (group.every(n => n.kind === 'graph_input' || n.kind === 'graph_output')) continue;
+      const value = node => {
+        const relatives = [];
+        for (const e of fwd) {
+          const otherId = forward
+            ? (scopeNodeId(e.to) === node.id ? scopeNodeId(e.from) : null)
+            : (scopeNodeId(e.from) === node.id ? scopeNodeId(e.to) : null);
+          if (!byId.has(otherId)) continue;
+          const otherRank = ranks.get(otherId);
+          if (forward ? otherRank >= rank : otherRank <= rank) continue;
+          relatives.push(groups.get(otherRank).indexOf(byId.get(otherId)));
+        }
+        return relatives.length ? relatives.reduce((a,b)=>a+b,0) / relatives.length : null;
+      };
+      const weights = new Map(group.map(n => [n, value(n)]));
+      const previous = new Map(group.map((n,i)=>[n,i]));
+      group.sort((a,b) => {
+        const av=weights.get(a), bv=weights.get(b);
+        if (av === null && bv === null) return previous.get(a)-previous.get(b);
+        if (av === null) return 1;
+        if (bv === null) return -1;
+        return av-bv || previous.get(a)-previous.get(b);
+      });
+    }
+  }
+  sweep(true); sweep(false); sweep(true);
+  const widths = new Map(cols.map(c => [c,Math.max(1,...groups.get(c).map(n=>n._width))]));
+  const colX = new Map(); let x = GV.margin;
+  for (const c of cols) { colX.set(c, x); x += widths.get(c) + GV.columnGap; }
+  const innerWidth = x - GV.columnGap + GV.margin;
+  const colHeights = new Map(cols.map(c => [c, groups.get(c).reduce((sum,n)=>sum+n._height,0) + GV.rowGap*(groups.get(c).length-1)]));
+  const tallest = Math.max(0,...colHeights.values());
+  for (const c of cols) {
+    let y = GV.margin + (tallest-colHeights.get(c))/2;
+    for (const n of groups.get(c)) {
+      n._x=colX.get(c); n._y=y;
+      y+=n._height+GV.rowGap;
+    }
+  }
+  scope._layout={ width: Math.max(1,innerWidth), height: Math.max(1,tallest+2*GV.margin) };
+  scope._routingGrid = null;
+}
+
+function pinRow(node, pinIndex) {
+  return GV.firstPin + Math.max(0,pinIndex || 0)*GV.pinPitch;
+}
+
+function endpointAnchor(scope, endpoint, ox, oy, boundaryNode = null) {
+  if (!endpoint) return null;
+  if (endpoint.kind === 'scope_input' && boundaryNode)
+    return { x: boundaryNode._absX, y: boundaryNode._absY + pinRow(boundaryNode, endpoint.pin), boundary: true };
+  if (endpoint.kind === 'scope_output' && boundaryNode)
+    return { x: boundaryNode._absX + boundaryNode._width, y: boundaryNode._absY + pinRow(boundaryNode, endpoint.pin), boundary: true };
+  return null;
+}
+
+function concreteEdgeAnchors(scope, edge, ox, oy, boundaryNode = null) {
+  function anchor(ep, source) {
+    if (ep.kind !== 'node') return endpointAnchor(scope, ep, ox, oy, boundaryNode);
+    const n=doc.graphModel.nodeById.get(ep.nodeId);
+    if (!n) return null;
+    return { x: ox+n._x+(source ? n._width : 0), y: oy+n._y+pinRow(n,ep.pin), node:n };
+  }
+  return { a:anchor(edge.from,true), b:anchor(edge.to,false) };
+}
+
+function segmentClear(p,q,rects) {
+  const epsilon=0.00001;
+  for (const r of rects) {
+    if (Math.abs(p.y-q.y)<epsilon) {
+      if (p.y > r.y+epsilon && p.y < r.y+r.h-epsilon &&
+          Math.max(p.x,q.x)>r.x+epsilon && Math.min(p.x,q.x)<r.x+r.w-epsilon) return false;
+    } else if (Math.abs(p.x-q.x)<epsilon) {
+      if (p.x > r.x+epsilon && p.x < r.x+r.w-epsilon &&
+          Math.max(p.y,q.y)>r.y+epsilon && Math.min(p.y,q.y)<r.y+r.h-epsilon) return false;
+    } else return false;
+  }
+  return true;
+}
+
+function simplifyRoute(points) {
+  const out=[];
+  for (const p of points) {
+    if (out.length && Math.abs(out[out.length-1].x-p.x)<1e-6 && Math.abs(out[out.length-1].y-p.y)<1e-6) continue;
+    out.push(p);
+    while (out.length>=3) {
+      const [a,b,c]=out.slice(-3);
+      if ((Math.abs(a.x-b.x)<1e-6 && Math.abs(b.x-c.x)<1e-6) ||
+          (Math.abs(a.y-b.y)<1e-6 && Math.abs(b.y-c.y)<1e-6)) out.splice(-2,1);
+      else break;
+    }
+  }
+  return out;
+}
+
+// A* over a rectilinear visibility grid. Every candidate link is tested
+// against inflated node rectangles; no wire can cross the interior of a box.
+// The two short port stubs are exempt from clearance (but never touch boxes).
+// Candidate tracks always include a corridor around the entire scope, so
+// backward links and feedback loops are routable without special cases.
+function routeEdgePath(a,b,rects) {
+  const pad=GV.clearance, stub=GV.stub;
+  const start={x:a.x+stub,y:a.y}, end={x:b.x-stub,y:b.y};
+  const inflated=rects.map(r=>({x:r.x-pad,y:r.y-pad,w:r.w+2*pad,h:r.h+2*pad}));
+  const routeOK = pts => pts.every((p,i)=>i===0 || segmentClear(pts[i-1],p,inflated));
+  // Fast, aesthetically clean center-lane route for unobstructed forward edges.
+  if (start.x <= end.x) {
+    const mid=(start.x+end.x)/2;
+    const direct = simplifyRoute([start,{x:mid,y:start.y},{x:mid,y:end.y},end]);
+    if (routeOK(direct)) return simplifyRoute([a,...direct,b]);
+  }
+  const allX=[start.x,end.x], allY=[start.y,end.y];
+  for (const r of inflated) {
+    allX.push(r.x-2,r.x+r.w+2);
+    allY.push(r.y-2,r.y+r.h+2);
+  }
+  const minX=Math.min(...allX), maxX=Math.max(...allX), minY=Math.min(...allY), maxY=Math.max(...allY);
+  allX.push(minX-36,maxX+36); allY.push(minY-36,maxY+36);
+  const xs=[...new Set(allX)].sort((a,b)=>a-b), ys=[...new Set(allY)].sort((a,b)=>a-b);
+  const nx=xs.length,ny=ys.length;
+  const s=ys.indexOf(start.y)*nx+xs.indexOf(start.x), goal=ys.indexOf(end.y)*nx+xs.indexOf(end.x);
+  const blocked=new Uint8Array(nx*ny);
+  for (let iy=0;iy<ny;iy++) for(let ix=0;ix<nx;ix++) {
+    const x=xs[ix],y=ys[iy];
+    if (inflated.some(r=>x>r.x && x<r.x+r.w && y>r.y && y<r.y+r.h)) blocked[iy*nx+ix]=1;
+  }
+  // Priority heap: [estimatedTotal, cost, nodeIndex, incomingDirection].
+  const heap=[];
+  const push=item=>{let i=heap.length; heap.push(item); while(i){const p=(i-1)>>1; if(heap[p][0]<=item[0])break; heap[i]=heap[p];i=p;}heap[i]=item;};
+  const pop=()=>{const head=heap[0], last=heap.pop(); if(heap.length){let i=0;while(i*2+1<heap.length){let c=i*2+1;if(c+1<heap.length&&heap[c+1][0]<heap[c][0])c++;if(last[0]<=heap[c][0])break;heap[i]=heap[c];i=c;}heap[i]=last;}return head;};
+  const key=(index,dir)=>index*5+dir;
+  const costs=new Float64Array(nx*ny*5).fill(Infinity), previous=new Int32Array(nx*ny*5).fill(-1);
+  const init=key(s,4); costs[init]=0;
+  const heuristic=i=>Math.abs(xs[i%nx]-end.x)+Math.abs(ys[Math.floor(i/nx)]-end.y);
+  push([heuristic(s),0,s,4]);
+  let lastKey=-1, steps=0;
+  const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+  while(heap.length && steps++ < 250000) {
+    const [,,idx,dir]=pop(), state=key(idx,dir), cost=costs[state];
+    // Older queue entries are harmless: the current cost determines priority.
+    if (idx===goal) {lastKey=state;break;}
+    const ix=idx%nx,iy=Math.floor(idx/nx), from={x:xs[ix],y:ys[iy]};
+    for(let nextDir=0;nextDir<4;nextDir++){
+      const [dx,dy]=dirs[nextDir],tx=ix+dx,ty=iy+dy;
+      if(tx<0||tx>=nx||ty<0||ty>=ny)continue;
+      const ni=ty*nx+tx;
+      if(blocked[ni])continue;
+      const to={x:xs[tx],y:ys[ty]};
+      if(!segmentClear(from,to,inflated))continue;
+      const bend=dir===4||dir===nextDir?0:26;
+      const nextCost=cost+Math.abs(to.x-from.x)+Math.abs(to.y-from.y)+bend;
+      const nk=key(ni,nextDir);
+      if(nextCost+1e-6>=costs[nk])continue;
+      costs[nk]=nextCost;previous[nk]=state;
+      push([nextCost+heuristic(ni),nextCost,ni,nextDir]);
+    }
+  }
+  if(lastKey<0) {
+    // Unreachable only for malformed/overlapping geometry; preserve a visible
+    // warning instead of drawing a wire through a node box.
+    return null;
+  }
+  const path=[];
+  for(let at=lastKey;at!==-1;at=previous[at]){
+    const i=Math.floor(at/5);path.push({x:xs[i%nx],y:ys[Math.floor(i/nx)]});
+  }
+  path.reverse();
+  return simplifyRoute([a,...path,b]);
+}
+
+function drawEdge(ctx, scope, edge, ox, oy, boundaryNode = null) {
+  const {a,b}=concreteEdgeAnchors(scope,edge,ox,oy,boundaryNode);
+  if(!a||!b)return;
+  if(!edge._path) {
+    const obstacles=scope.nodes.map(n=>({x:ox+n._x,y:oy+n._y,w:n._width,h:n._height}));
+    edge._path=routeEdgePath(a,b,obstacles);
+  }
+  const pts=edge._path;
+  if(!pts || pts.length<2)return;
+  const selected=doc.selection.connectionId===edge.connectionId;
+  const nearby=doc.selection.nodeIds.has(scopeNodeId(edge.from)) || doc.selection.nodeIds.has(scopeNodeId(edge.to));
+  const focused=doc.selection.nodeIds.size>0 || doc.selection.connectionId!==null;
+  ctx.strokeStyle=selected?'#a5b4fc':edge.feedback?'#fbbf24':nearby?'#93c5fd':(focused?'#444854':'#858598');
+  ctx.lineWidth=selected?3.5:nearby?2.7:edge.feedback?2.2:1.8;
+  ctx.globalAlpha=focused&&!selected&&!nearby?.48:1;
+  ctx.lineJoin='round';ctx.lineCap='round';
+  ctx.setLineDash(edge.feedback?[7,5]:[]);
+  ctx.beginPath();ctx.moveTo(pts[0].x,pts[0].y);
+  for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i].x,pts[i].y);
+  ctx.stroke();ctx.setLineDash([]);
+  // Last segment approaches the input from the left, so arrow points right.
+  ctx.fillStyle=ctx.strokeStyle;
+  ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-10,b.y-5);ctx.lineTo(b.x-10,b.y+5);ctx.closePath();ctx.fill();
+  ctx.globalAlpha=1;
+  doc.graphModel._hitEdges.push({edge,samples:pts});
+}
+
+function drawNode(ctx, node, absX, absY) {
+  node._absX = absX; node._absY = absY;
+  const selected=doc.selection.nodeIds.has(node.id);
+  const boundary=node.kind==='graph_input'||node.kind==='graph_output';
+  const sub=node.kind==='subgraph';
+  const linked=doc.graphModel._neighborIds?.has(node.id) || false;
+  ctx.fillStyle=boundary?'#183039':sub?'#262333':'#252730';
+  ctx.strokeStyle=selected?'#a5b4fc':linked?'#7dd3fc':boundary?'#457e91':sub?'#79709d':'#5a5c6e';
+  ctx.lineWidth=selected?3:linked?2.5:1.5;
+  ctx.beginPath();
+  if(ctx.roundRect)ctx.roundRect(absX,absY,node._width,node._height,boundary?12:8);
+  else ctx.rect(absX,absY,node._width,node._height);
+  ctx.fill();ctx.stroke();
+  if(selected){
+    ctx.strokeStyle='rgba(165,180,252,.25)';ctx.lineWidth=7;ctx.stroke();
+  }
+  // Deliberate hierarchy: title first, muted type, then clearly separated pins.
+  ctx.fillStyle='#f4f4f5';ctx.font='600 14px system-ui';ctx.textAlign='left';ctx.textBaseline='top';
+  ctx.fillText(node.name,absX+14,absY+13,node._width-(sub?60:104));
+  ctx.fillStyle=boundary?'#8be9fb':sub?'#c4b5fd':'#a1a1b5';ctx.font='11px system-ui';
+  ctx.fillText(boundary?node.type.toUpperCase():node.type,absX+14,absY+34,node._width-28);
+  ctx.strokeStyle='#41434f';ctx.lineWidth=1;ctx.beginPath();
+  ctx.moveTo(absX+12,absY+57);ctx.lineTo(absX+node._width-12,absY+57);ctx.stroke();
+  if(node.runtimeNodeId!==null){
+    ctx.fillStyle='#9b9bb1';ctx.font='10px monospace';ctx.textAlign='right';ctx.textBaseline='top';
+    const sched=Number.isFinite(node.scheduleIndex)&&node.scheduleIndex>=0?` · s${node.scheduleIndex}`:'';
+    ctx.fillText(`#${node.runtimeNodeId}${sched}`,absX+node._width-12,absY+15);
+  }
+  if(sub){
+    const cx=absX+node._width-23,cy=absY+22;
+    ctx.fillStyle='#c4b5fd';ctx.font='bold 18px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(node.expanded?'▾':'▸',cx,cy);
+    node._toggleRect={x:cx-13,y:cy-13,w:26,h:26};
+  } else node._toggleRect=null;
+  function drawPorts(dir){
+    const ports=node.ports?.[dir]||[];
+    for(let i=0;i<ports.length;i++){
+      const y=absY+pinRow(node,i), x=dir==='in'?absX:absX+node._width;
+      ctx.fillStyle=selected?'#c7d2fe':boundary?'#67e8f9':'#c2c3d0';
+      ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='#e0e1ea';ctx.font='11px ui-monospace, monospace';ctx.textBaseline='middle';
+      ctx.textAlign=dir==='in'?'left':'right';
+      ctx.fillText(ports[i].label,dir==='in'?absX+12:absX+node._width-12,y,node._width*.47);
+    }
+  }
+  drawPorts('in');drawPorts('out');
+  if(node.params.length){
+    ctx.fillStyle='#a5b4fc';ctx.font='10px system-ui';ctx.textAlign='right';ctx.textBaseline='bottom';
+    ctx.fillText(`${node.params.length} tunable`,absX+node._width-13,absY+node._height-10);
+  }
+  doc.graphModel._hitNodes.push({node,x:absX,y:absY,w:node._width,h:node._height});
+}
+
+function drawScope(ctx, scope, ox, oy, boundaryNode = null) {
+  // Draw unfocused edges first; selected paths stay above the rest.
+  for(const edge of scope.edges.filter(e=>doc.selection.connectionId!==e.connectionId))
+    drawEdge(ctx,scope,edge,ox,oy,boundaryNode);
+  for(const edge of scope.edges.filter(e=>doc.selection.connectionId===e.connectionId))
+    drawEdge(ctx,scope,edge,ox,oy,boundaryNode);
+  for(const node of scope.nodes){
+    const x=ox+node._x,y=oy+node._y;
+    drawNode(ctx,node,x,y);
+    if(node.kind==='subgraph'&&node.expanded&&node.scope)
+      drawScope(ctx,node.scope,x+node._innerX,y+node._innerY,node);
+  }
+}
+
+function rebuildGraphModel({preserveView=false}={}) {
+  doc.graphModel=doc.inspection?buildInspectionGraphModel(doc.inspection):null;
+  if(doc.graphModel){
+    layoutScope(doc.graphModel.root);
+    doc.graphModel._layout={...doc.graphModel.root._layout};
+  }
+  if(!preserveView)gvPendingFit='readable';
+  if(activeTab==='graphview')renderGraphView();
+}
+
+function fitGraphView(mode='graph') {
+  gvPendingFit=mode;
+  if(activeTab==='graphview')renderGraphView();
+}
+
+function fitBounds(bounds,mode,wW,wH) {
+  const PAD=36;
+  const width=Math.max(1,bounds.right-bounds.left),height=Math.max(1,bounds.bottom-bounds.top);
+  const zoomToFit=Math.max(.02,Math.min(3,(wW-PAD*2)/width,(wH-PAD*2)/height));
+  const zoom=mode==='readable'?Math.max(.85,Math.min(1.15,zoomToFit))
+    :mode==='selection'?Math.min(1.7,zoomToFit):zoomToFit;
+  const centerX=mode==='readable' && width*zoom>wW-PAD*2
+    ? PAD+width*zoom/2:(wW/2);
+  const centerY=mode==='readable' && height*zoom>wH-PAD*2
+    ? PAD+height*zoom/2:(wH/2);
+  return { zoom,panX:centerX-(bounds.left+bounds.right)/2*zoom,
+    panY:centerY-(bounds.top+bounds.bottom)/2*zoom };
+}
+
+function graphSelectionNeighborhood(scope, selected, connectionId, neighbors=new Set()) {
+  for(const e of scope.edges) {
+    const a=scopeNodeId(e.from),b=scopeNodeId(e.to);
+    if(selected.has(a) && b) neighbors.add(b);
+    if(selected.has(b) && a) neighbors.add(a);
+    if(connectionId!==null && connectionId===e.connectionId) {
+      if(a) neighbors.add(a);
+      if(b) neighbors.add(b);
+    }
+  }
+  for(const n of scope.nodes)if(n.kind==='subgraph' && n.expanded && n.scope)
+    graphSelectionNeighborhood(n.scope,selected,connectionId,neighbors);
+  return neighbors;
+}
+
+function selectedBounds(model) {
+  const found=[];
+  for(const n of model._hitNodes){
+    if(doc.selection.nodeIds.has(n.node.id))found.push({left:n.x,right:n.x+n.w,top:n.y,bottom:n.y+n.h});
+  }
+  if(doc.selection.connectionId!==null){
+    for(const e of model._hitEdges)if(e.edge.connectionId===doc.selection.connectionId && e.samples.length){
+      found.push({left:Math.min(...e.samples.map(p=>p.x)),right:Math.max(...e.samples.map(p=>p.x)),
+        top:Math.min(...e.samples.map(p=>p.y)),bottom:Math.max(...e.samples.map(p=>p.y))});
+    }
+  }
+  // A profile/source selection can point inside a collapsed subgraph. Focus
+  // the closest visible ancestor instead of disabling Fit Selection.
+  for(const id of doc.selection.nodeIds) {
+    if(model._hitNodes.some(h=>h.node.id===id))continue;
+    const path=id.startsWith('node:')
+      ? inspectionNodeByRuntimeId(Number(id.slice(5)))?.instance_path
+      : id.startsWith('subgraph:') ? id.slice('subgraph:'.length) : null;
+    if(!path)continue;
+    const ancestors=model._hitNodes.filter(h=>h.node.kind==='subgraph' &&
+      (path===h.node.instancePath || path.startsWith(h.node.instancePath+'.')));
+    ancestors.sort((a,b)=>b.node.instancePath.length-a.node.instancePath.length);
+    if(ancestors.length){const h=ancestors[0];found.push({left:h.x,right:h.x+h.w,top:h.y,bottom:h.y+h.h});}
+  }
+  if(!found.length)return null;
+  return {left:Math.min(...found.map(r=>r.left))-20,right:Math.max(...found.map(r=>r.right))+20,
+    top:Math.min(...found.map(r=>r.top))-20,bottom:Math.max(...found.map(r=>r.bottom))+20};
+}
+
+function renderGraphView() {
+  const model=doc.graphModel;
+  const wrap=document.getElementById('graphview-canvas-wrap');
+  const gvc=document.getElementById('graphview-canvas');
+  const wW=Math.max(1,wrap.clientWidth||400),wH=Math.max(1,wrap.clientHeight||300);
+  const dpr=Math.max(1,window.devicePixelRatio||1);
+  gvc.style.width=`${wW}px`;gvc.style.height=`${wH}px`;
+  const pixelW=Math.round(wW*dpr),pixelH=Math.round(wH*dpr);
+  if(gvc.width!==pixelW)gvc.width=pixelW;
+  if(gvc.height!==pixelH)gvc.height=pixelH;
+  const ctx=gvc.getContext('2d');ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,pixelW,pixelH);
+  if(!model||!model.root||model.root.nodes.length===0){
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.fillStyle='#737382';ctx.font='13px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(doc.inspection?'Inspection contains no graph nodes':'Load or compile a build with inspection data',wW/2,wH/2);
+    document.getElementById('btn-gv-fit-selection').disabled=true;
+    return;
+  }
+  // First render establishes hit geometry; following fit operations use it.
+  if(gvPendingFit){
+    let bounds={left:0,top:0,right:model._layout.width,bottom:model._layout.height};
+    if(gvPendingFit==='selection')bounds=selectedBounds(model)||bounds;
+    const fitted=fitBounds(bounds,gvPendingFit,wW,wH);
+    gvZoom=fitted.zoom;gvPanX=fitted.panX;gvPanY=fitted.panY;
+    gvPendingFit=null;
+  }
+  model._hitNodes=[];model._hitEdges=[];
+  model._neighborIds=graphSelectionNeighborhood(model.root,doc.selection.nodeIds,doc.selection.connectionId);
+  ctx.setTransform(dpr*gvZoom,0,0,dpr*gvZoom,dpr*gvPanX,dpr*gvPanY);
+  drawScope(ctx,model.root,0,0,null);
+  ctx.setTransform(1,0,0,1,0,0);
+  document.getElementById('btn-gv-fit-selection').disabled=!selectedBounds(model);
+  document.getElementById('graphview-zoom').textContent=`${Math.round(gvZoom*100)}%`;
+}
+
+function graphCoords(e) {
+  const rect = e.currentTarget.getBoundingClientRect();
+  return { x: (e.clientX - rect.left - gvPanX) / gvZoom,
+           y: (e.clientY - rect.top - gvPanY) / gvZoom };
+}
+
+function graphHitNode(pt) {
+  const hits = doc.graphModel?._hitNodes || [];
+  for (let i = hits.length - 1; i >= 0; i--) {
+    const h = hits[i];
+    if (pt.x >= h.x && pt.x <= h.x+h.w && pt.y >= h.y && pt.y <= h.y+h.h) return h;
+  }
+  return null;
+}
+
+function pointSegmentDistance(p, a, b) {
+  const dx=b.x-a.x, dy=b.y-a.y;
+  if (!dx && !dy) return Math.hypot(p.x-a.x,p.y-a.y);
+  const t=Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/(dx*dx+dy*dy)));
+  return Math.hypot(p.x-(a.x+t*dx),p.y-(a.y+t*dy));
+}
+
+function graphHitEdge(pt) {
+  let best=null, bestD=7/Math.max(gvZoom,.15);
+  for (const h of (doc.graphModel?._hitEdges || [])) {
+    for (let i=1;i<h.samples.length;i++) {
+      const d=pointSegmentDistance(pt,h.samples[i-1],h.samples[i]);
+      if (d<bestD) { bestD=d; best=h; }
+    }
+  }
+  return best;
+}
+
+function toggleSubgraph(node) {
+  if (!node || node.kind !== 'subgraph') return;
+  if (doc.expandedSubgraphs.has(node.instancePath)) doc.expandedSubgraphs.delete(node.instancePath);
+  else doc.expandedSubgraphs.add(node.instancePath);
+  rebuildGraphModel();
+  // Expansion is independent from selection. Keep selected descendant IDs even
+  // while collapsed; profile/parameter selection must not disappear.
+  syncSelectionUI();
+}
+
+function collapseAllSubgraphs() {
+  doc.expandedSubgraphs.clear();
+  rebuildGraphModel();
+}
+
+function expandAllSubgraphs() {
+  doc.expandedSubgraphs = new Set((doc.inspection?.subgraphs || []).map(s => s.instance_path));
+  rebuildGraphModel();
+}
+
+function navigateToSource(span) {
+  if (!span) return false;
+  if (!window.humEditor?.revealLocation) {
+    const msg = 'Editor navigation API is unavailable. Reload the browser tool so the current hum_editor.js is loaded.';
+    addLog(`✖ ${msg}`, 'log-err');
+    console.error('[Hum navigation]', msg, { editorApiVersion: window.humEditor?.apiVersion || 0 });
+    return false;
+  }
+  const ok = window.humEditor.revealLocation({
+    path: span.file, line: span.line, column: span.column,
+    endLine: span.end_line, endColumn: span.end_column,
+  });
+  if (ok) activateTab('editor');
+  else {
+    const msg = `Source ${span.file}:${span.line}:${span.column} is not open. Use Editor → Open Project… to load the matching project source.`;
+    addLog(`⚠ ${msg}`, 'log-err');
+    console.warn('[Hum navigation]', msg);
+  }
+  return ok;
+}
+
+function selectGraphNode(node, { mode = 'replace' } = {}) {
+  setNodeSelection(node ? node.id : null, { mode, scrollParams: !!node?.runtimeNodeId });
+}
+
+function selectGraphConnection(edge) {
+  doc.selection.nodeIds.clear();
+  doc.selection.primaryNodeId = null;
+  doc.selection.connectionId = edge ? edge.connectionId : null;
+  syncSelectionUI();
+}
+
+function currentSelectionPath() {
+  if (!doc.inspection) return '';
+  const id = doc.selection.primaryNodeId;
+  if (id?.startsWith('node:'))
+    return inspectionNodeByRuntimeId(Number(id.slice(5)))?.instance_path || '';
+  if (id?.startsWith('subgraph:')) return id.slice('subgraph:'.length);
+  return '';
+}
+
+function commonPathPrefix(a, b) {
+  const aa=String(a||'').split('.'), bb=String(b||'').split('.');
+  let n=0; while(n<aa.length && n<bb.length && aa[n]===bb[n]) n++; return n;
+}
+
+function chooseSourceCandidate(cands) {
+  if (!cands.length) return null;
+  const current=currentSelectionPath();
+  return [...cands].sort((a,b) => {
+    const aw=spanWeight(a.source), bw=spanWeight(b.source); if (aw!==bw) return aw-bw;
+    const ap=a.instance_path||'', bp=b.instance_path||'';
+    const ac=commonPathPrefix(ap,current), bc=commonPathPrefix(bp,current); if (ac!==bc) return bc-ac;
+    return ap.localeCompare(bp);
+  })[0];
+}
+
+function selectGraphFromSource(loc) {
+  if (!doc.inspection || !loc || !String(loc.path || '').endsWith('.hum')) return;
+  const nodes=(doc.inspection.nodes||[]).filter(n=>sourceContains(n.source,loc));
+  const subs=(doc.inspection.subgraphs||[]).filter(s=>sourceContains(s.source,loc));
+  const conns=(doc.inspection.connections||[]).filter(c=>sourceContains(c.source,loc));
+  const gpins=[...(doc.inspection.graph_inputs||[]),...(doc.inspection.graph_outputs||[])]
+    .filter(p=>sourceContains(p.source,loc));
+  const subPins=[];
+  for (const s of (doc.inspection.subgraphs||[])) {
+    for (const p of [...(s.inputs||[]),...(s.outputs||[])])
+      if (sourceContains(p.source,loc)) subPins.push({subgraph:s,pin:p});
+  }
+  const subDefs=(doc.inspection.subgraphs||[]).filter(s=>sourceContains(s.definition_source,loc));
+  const candidate=chooseSourceCandidate([
+    ...nodes.map(n=>({kind:'node',source:n.source,instance_path:n.instance_path,value:n})),
+    ...subs.map(s=>({kind:'subgraph',source:s.source,instance_path:s.instance_path,value:s})),
+    ...conns.map(c=>({kind:'connection',source:c.source,instance_path:c.instance_path||'',value:c})),
+    ...gpins.map(p=>({kind:'graph_pin',source:p.source,instance_path:'',value:p})),
+    ...subPins.map(x=>({kind:'subgraph_pin',source:x.pin.source,instance_path:x.subgraph.instance_path,value:x})),
+    ...subDefs.map(s=>({kind:'subgraph_definition',source:s.definition_source,instance_path:s.instance_path,value:s})),
+  ]);
+  if (!candidate) return;
+
+  if (candidate.kind==='node') {
+    addAncestorExpansions(candidate.value.instance_path);
+    rebuildGraphModel({preserveView:true});
+    selectRuntimeNode(candidate.value.runtime_node_id,{scrollParams:false,revealGraph:false});
+  } else if (candidate.kind==='subgraph') {
+    const parent=candidate.value.parent_path;
+    if (parent) addAncestorExpansions(parent);
+    rebuildGraphModel({preserveView:true});
+    selectGraphNode(graphViewNodeById(`subgraph:${candidate.value.instance_path}`));
+  } else if (candidate.kind==='connection') {
+    const scope=candidate.value.instance_path;
+    if (scope) {
+      doc.expandedSubgraphs.add(scope);
+      addAncestorExpansions(scope);
+    }
+    rebuildGraphModel({preserveView:true});
+    selectGraphConnection({connectionId:candidate.value.connection_id});
+  } else if (candidate.kind==='graph_pin') {
+    const isInput=candidate.value.direction==='input';
+    selectGraphNode(graphViewNodeById(`${isInput?'gin':'gout'}:${candidate.value.index}`));
+  } else {
+    const sg=candidate.kind==='subgraph_pin' ? candidate.value.subgraph : candidate.value;
+    if (sg.parent_path) addAncestorExpansions(sg.parent_path);
+    rebuildGraphModel({preserveView:true});
+    selectGraphNode(graphViewNodeById(`subgraph:${sg.instance_path}`));
+  }
+}
+
+
+// ─── §AI CONTEXT EXPORT (PHASE 4) ─────────────────────────────────────────────
+// This is an outbound *text handoff*, not an AI invocation. No request leaves
+// the browser. Keep the payload builder pure (hum_ai_context.js) and share the
+// result between clipboard/download so neither handoff changes Hum semantics.
+let lastAICheck = null;
+function aiTextFileSignature(entries) {
+  return JSON.stringify(Object.entries(entries)
+    .filter(([path, text]) => /\.(?:hum|toml)$/i.test(path) && typeof text === 'string')
+    .sort(([a], [b]) => a.localeCompare(b)));
+}
+function aiExportFiles() {
+  if (!window.humEditor) return [];
+  if (editorProject) {
+    // Same overlay as Compile: include unsaved edits, not stale disk snapshots.
+    const files = projectFilesWithOverlay();
+    return Object.entries(files).filter(([path, text]) =>
+      /\.(?:hum|toml)$/i.test(path) && typeof text === 'string')
+      .map(([path, text]) => ({ path, text }));
+  }
+  // No project: do not silently export unrelated open tabs. Standalone .hum
+  // compilation likewise uses only the active editor document.
+  const a = window.humEditor.getActive();
+  return a && /\.(?:hum|toml)$/i.test(a.name || '')
+    ? [{ path: a.path || a.name, text: a.text }] : [];
+}
+function aiBuildExport() {
+  if (!window.HumAIContext?.buildContext || !window.HumAIReference?.text)
+    throw new Error('AI context exporter or Hum V1 language reference did not load. Reload Hum Studio.');
+  if (!window.humEditor) throw new Error('Open the Hum editor before copying context.');
+  if (!Array.isArray(cachedNodeIndex) || !cachedNodeIndex.length) {
+    requestNodeIndex();
+    throw new Error('Compiler node index is still loading. Retry after “Node index: N types” appears in the console.');
+  }
+  const files = aiExportFiles();
+  const active = window.humEditor.getActive();
+  const sig = aiTextFileSignature(Object.fromEntries(files.map(f => [f.path, f.text])));
+  const checked = !!lastAICheck && lastAICheck.kind === (editorProject ? 'project' : 'source') && lastAICheck.signature === sig;
+  return window.HumAIContext.buildContext({
+    files, activePath: active?.path || active?.name || '',
+    scope: document.getElementById('ai-context-scope').value,
+    inspection: doc.inspection,
+    selection: {
+      nodeIds: [...doc.selection.nodeIds], connectionId: doc.selection.connectionId,
+    },
+    nodeIndex: cachedNodeIndex,
+    languageReference: window.HumAIReference,
+    catalogDetail: document.getElementById('ai-catalog-detail').value,
+    diagnostics: checked ? lastAICheck.diagnostics : null,
+    diagnosticsCurrent: checked,
+    buildName: currentBuild.name,
+  });
+}
+function aiExportStatus(message, error = false) {
+  const el = document.getElementById('ai-export-status');
+  el.textContent = message;
+  el.className = error ? 'error' : 'ok';
+}
+function legacyCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = !!document.execCommand('copy'); }
+  finally { ta.remove(); }
+  return ok;
+}
+async function aiCopyContext() {
+  try {
+    const result = aiBuildExport();
+    // Call writeText directly in the click handler, before any asynchronous
+    // worker/diagnostic activity could consume transient user activation.
+    let success = false;
+    if (navigator.clipboard?.writeText) {
+      try { await navigator.clipboard.writeText(result.text); success = true; }
+      catch (e) { /* Firefox, permissions, or insecure origin: try fallback. */ }
+    }
+    if (!success) success = legacyCopy(result.text);
+    if (!success) throw new Error('Clipboard permission unavailable. Use ↓ .md and attach or paste the downloaded file.');
+    aiExportStatus(`Copied (${result.includedFiles.length} file${result.includedFiles.length === 1 ? '' : 's'})`);
+    addLog(`✓ Copied AI context (${result.text.length} characters; ${result.includedFiles.length} source files).`, 'log-ok');
+  } catch (e) { aiExportStatus(e.message, true); addLog('✖ AI context: ' + e.message, 'log-err'); }
+}
+function aiDownloadContext() {
+  try {
+    const result = aiBuildExport();
+    const blob = new Blob([result.text], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'hum-ai-context.md';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    aiExportStatus(`Saved (${result.includedFiles.length} files)`);
+    addLog(`✓ Downloaded AI context (${result.text.length} characters).`, 'log-ok');
+  } catch (e) { aiExportStatus(e.message, true); addLog('✖ AI context: ' + e.message, 'log-err'); }
+}
+
+// ─── §PRESETS ─────────────────────────────────────────────────────────────────
+function savePreset() {
+  const preset = {};
+  for (const [name, p] of Object.entries(doc.paramMap)) preset[name] = p.value;
+  const blob = new Blob([JSON.stringify(preset, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (doc.tuning ? doc.tuning.project : 'preset') + '_preset.json';
+  a.click();
+}
+
+function applyPreset(text) {
+  let preset;
+  try { preset = JSON.parse(text); }
+  catch(e) { alert('Invalid preset JSON'); return; }
+  for (const [name, val] of Object.entries(preset)) {
+    if (doc.paramMap[name] !== undefined) {
+      updateDisplay(name, val);
+      sendParam(name, val);
+    }
+  }
+  addLog(`✓ Preset applied (${Object.keys(preset).length} params)`, 'log-ok');
+}
+
+// ─── §EDITOR ──────────────────────────────────────────────────────────────────
+// The CodeMirror view + tab strip + buffer registry live in hum_editor.js (an ES
+// module) and publish a `window.humEditor` bridge once ready.  Everything here is
+// the glue: file/project open + save (File System Access, download fallback) and
+// compiling the live buffer(s) through the SAME worker path as the toolbar.
+//
+// editorProject: set when a project folder is open for editing.  Its `files`
+// {relpath: text|Uint8Array} is the on-disk snapshot (incl. binary load() files);
+// Compile overlays the live buffer text onto it and builds the whole project.
+let editorProject = null;
+let editorReady = false;
+window.addEventListener('humeditor-ready', () => {
+  editorReady = true;
+  document.getElementById('btn-ai-copy').disabled = false;
+  document.getElementById('btn-ai-download').disabled = false;
+  const apiVersion = Number(window.humEditor?.apiVersion || 0);
+  if (window.humEditor.setChecker) window.humEditor.setChecker(editorCheck);
+  if (apiVersion < 3 || typeof window.humEditor?.revealLocation !== 'function' || typeof window.humEditor?.setInspection !== 'function') {
+    const msg = `Editor asset/API mismatch (loaded API ${apiVersion || 'legacy'}, need 3). Hard-reload the page.`;
+    addLog(`✖ ${msg}`, 'log-err');
+    console.error('[Hum editor]', msg);
+  } else {
+    if (cachedNodeIndex) window.humEditor.setNodeIndex(cachedNodeIndex);
+    if (doc.inspection) window.humEditor.setInspection(doc.inspection);
+    window.humEditor.setLinkedSelections?.(selectedSourceSpans());
+    addLog(`✓ Editor ready (API ${apiVersion})`, 'log-ok');
+  }
+});
+window.addEventListener('humeditor-save',    () => { if (editorReady) editorSave(); });
+window.addEventListener('humeditor-compile', () => { if (editorReady) editorCompile(); });
+window.addEventListener('humeditor-cursor', e => {
+  if (editorReady && e.detail) selectGraphFromSource(e.detail);
+});
+// Surface module/CDN load failures (e.g. esm.sh resolution) in the Console pane —
+// otherwise an editor that fails to initialize looks like dead buttons.
+window.addEventListener('error', e => {
+  if (e && e.filename && /hum_editor\.js|esm\.sh/.test(e.filename))
+    addLog('✖ Editor load: ' + (e.message || 'module error') + ' @ ' + e.filename, 'log-err');
+});
+setTimeout(() => {
+  if (!editorReady)
+    addLog('⚠ Editor not ready yet — if buttons do nothing, check the browser console for ' +
+           'CodeMirror import errors (needs internet for esm.sh).', 'log-err');
+}, 6000);
+
+const NEW_HUM_TEMPLATE =
+`# New hum graph
+import "std.io"
+import "std.gain"
+
+define sample_rate = 48000
+define block_size  = 256
+
+graph main {
+    pin audio : input  { type: float32, channels: 1, block_size: graph }
+    pin audio : output { type: float32, channels: 1, block_size: graph }
+
+    node gain1 : Gain { gain: 0.5 @param }
+
+    audio     -> gain1.in
+    gain1.out -> audio
+}
+`;
+
+function editorAvailable() {
+  if (!editorReady || !window.humEditor) {
+    addLog('… editor still loading — try again in a moment', 'log-out');
+    return false;
+  }
+  return true;
+}
+
+// Open text into a NEW or existing tab (dedup by path) and switch to the editor.
+// Used by the editor's own buttons and by the toolbar "Open .hum".
+function editorOpenText(text, name, handle = null, path = null) {
+  if (!window.humEditor) return;
+  window.humEditor.openFile({ path: path || name, name, text, handle });
+  activateTab('editor');
+}
+
+function editorNew() {
+  if (!editorAvailable()) return;
+  window.humEditor.openFile({ name: 'untitled.hum', text: NEW_HUM_TEMPLATE });
+  activateTab('editor');
+  window.humEditor.focus();
+}
+
+async function editorOpen() {
+  if (!editorAvailable()) return;
+  if (window.showOpenFilePicker) {
+    let handle;
+    try {
+      [handle] = await window.showOpenFilePicker({
+        types: [{ description: 'Hum source / manifest', accept: { 'text/plain': ['.hum', '.toml'] } }],
+      });
+    } catch (e) { return; } // cancelled
+    const text = await (await handle.getFile()).text();
+    editorOpenText(text, handle.name, handle, handle.name);
+  } else {
+    document.getElementById('file-hum-edit').click();   // fallback <input type=file>
+  }
+}
+
+function configuredOutputDir(humTomlText) {
+  // This is only a UI location hint. The compiler remains authoritative for
+  // project semantics; if we cannot recognize the simple V1 string form, use
+  // the V1 default output directory.
+  let inBuild = false;
+  for (const raw of String(humTomlText || '').split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, '').trim();
+    const section = line.match(/^\[([^\]]+)\]$/);
+    if (section) { inBuild = section[1].trim() === 'build'; continue; }
+    if (!inBuild) continue;
+    const m = line.match(/^output_dir\s*=\s*["']([^"']+)["']\s*$/);
+    if (m) return m[1].replace(/\\/g, '/').replace(/^\.\//, '');
+  }
+  return 'build';
+}
+
+async function directoryHandleAt(root, relativePath) {
+  let dir = root;
+  const parts = String(relativePath || '').replace(/\\/g, '/').split('/').filter(p => p && p !== '.');
+  try {
+    for (const part of parts) {
+      if (part === '..') return null; // output outside the project grant is inaccessible
+      dir = await dir.getDirectoryHandle(part);
+    }
+    return dir;
+  } catch (e) { return null; }
+}
+
+async function loadProjectBuildIfPresent(projectDir, humTomlText) {
+  const outputDir = configuredOutputDir(humTomlText);
+  const buildDir = await directoryHandleAt(projectDir, outputDir);
+  if (!buildDir) {
+    addLog(`Project opened; no existing ${outputDir}/ build found — Compile ▶ to create one.`, 'log-out');
+    return false;
+  }
+  const { builds, stems } = await scanBuildDirectory(buildDir);
+  if (!stems.length) {
+    addLog(`Project opened; ${outputDir}/ contains no Hum build artifacts — Compile ▶ to create one.`, 'log-out');
+    return false;
+  }
+  lastDirHandle = buildDir;
+  if (stems.length === 1) await loadBuild(stems[0], builds[stems[0]]);
+  else promptBuildChoice(stems, builds);
+  return true;
+}
+
+async function editorOpenProject() {
+  if (!editorAvailable()) return;
+  if (!window.showDirectoryPicker) { alert('Folder editing requires Chrome or Edge.'); return; }
+  let dir;
+  try { dir = await window.showDirectoryPicker({ mode: 'readwrite' }); }
+  catch (e) { return; } // cancelled
+  let entries;
+  try { entries = await collectProjectEntries(dir, '', { files: {}, handles: {} }); }
+  catch (e) { addLog('✖ Open project: ' + e.message, 'log-err'); return; }
+  if (!entries.files['hum.toml']) {
+    addLog('✖ No hum.toml at the root of that folder', 'log-err');
+    alert('No hum.toml found at the root of that folder.');
+    return;
+  }
+  // Switching projects: close the previous project's tabs first.  Both projects
+  // use root-relative paths (hum.toml, src/main.hum) and openFile() dedups by
+  // path, so leaving the old tabs open would let their buffers shadow this
+  // project's files in projectFilesWithOverlay() — silently compiling the wrong
+  // project.  Bail (keeping the current project) if the user declines to discard
+  // unsaved edits.
+  if (editorProject &&
+      window.humEditor.closePaths(Object.keys(editorProject.files)) === false) {
+    addLog('Project open cancelled — kept the current project and its unsaved edits.', 'log-out');
+    return;
+  }
+  editorProject = { files: entries.files };
+  // Open editable text files as tabs — hum.toml first, then the rest sorted.
+  // `path` stays project-root-relative (compile/save key); `display` prepends the
+  // picked folder name so tooltips read e.g. eq_5band/src/main.hum.
+  const root = dir.name;
+  const editable = Object.keys(entries.files)
+    .filter(r => typeof entries.files[r] === 'string' && (r.endsWith('.hum') || r.endsWith('.toml')))
+    .sort((a, b) => (a === 'hum.toml' ? -1 : b === 'hum.toml' ? 1 : a.localeCompare(b)));
+  for (const rel of editable)
+    window.humEditor.openFile({ path: rel, name: rel.split('/').pop(),
+                               display: root ? root + '/' + rel : rel,
+                               text: entries.files[rel], handle: entries.handles[rel] || null });
+  // Land on a graph file rather than the last-loaded tab.
+  const focusRel = editable.find(r => r.endsWith('main.hum')) || editable.find(r => r.endsWith('.hum')) || editable[0];
+  if (focusRel) window.humEditor.openFile({ path: focusRel });
+  activateTab('editor');
+  addLog(`✓ Opened project (${editable.length} files)`, 'log-ok');
+  await loadProjectBuildIfPresent(dir, entries.files['hum.toml']);
+}
+
+async function editorSave() {
+  if (!editorAvailable()) return;
+  const a = window.humEditor.getActive();
+  if (!a) return;
+  if (!a.handle) return editorSaveAs();
+  try {
+    const w = await a.handle.createWritable();
+    await w.write(a.text);
+    await w.close();
+    window.humEditor.markSaved(a.id, {});
+    if (editorProject && a.path && (a.path in editorProject.files)) editorProject.files[a.path] = a.text;
+    addLog(`✓ Saved ${a.name}`, 'log-ok');
+  } catch (e) {
+    addLog('✖ Save: ' + e.message, 'log-err');
+  }
+}
+
+async function editorSaveAs() {
+  if (!editorAvailable()) return;
+  const a = window.humEditor.getActive();
+  if (!a) return;
+  const ext = a.name.endsWith('.toml') ? '.toml' : '.hum';
+  const suggested = a.name || ('untitled' + ext);
+  if (window.showSaveFilePicker) {
+    let handle;
+    try {
+      handle = await window.showSaveFilePicker({
+        suggestedName: suggested,
+        types: [{ description: 'Hum file', accept: { 'text/plain': [ext] } }],
+      });
+    } catch (e) { return; } // cancelled
+    try {
+      const w = await handle.createWritable();
+      await w.write(a.text);
+      await w.close();
+      window.humEditor.markSaved(a.id, { handle, name: handle.name, path: handle.name });
+      addLog(`✓ Saved ${handle.name}`, 'log-ok');
+    } catch (e) {
+      addLog('✖ Save As: ' + e.message, 'log-err');
+    }
+  } else {
+    // No File System Access — fall back to a download (same idiom as savePreset).
+    const blob = new Blob([a.text], { type: 'text/plain' });
+    const el = document.createElement('a');
+    el.href = URL.createObjectURL(blob);
+    el.download = suggested;
+    el.click();
+    window.humEditor.markSaved(a.id, {});
+  }
+}
+
+// The project's on-disk snapshot with each open buffer's live (unsaved) text
+// overlaid by path.  Shared by Compile and the linter so they build identical
+// source.
+function projectFilesWithOverlay() {
+  const files = Object.assign({}, editorProject.files);
+  for (const b of window.humEditor.getBuffers())
+    if (b.path && (b.path in files)) files[b.path] = b.text;
+  return files;
+}
+
+function editorCompileProject() {
+  startCompile({ type: 'compileProject', files: projectFilesWithOverlay() });
+}
+
+function editorCompile() {
+  if (!editorAvailable()) return;
+  const a = window.humEditor.getActive();
+  const inProject = editorProject && a && a.path && (a.path in editorProject.files);
+  if (inProject)                              editorCompileProject();     // active file belongs to project
+  else if (a && a.name.endsWith('.hum'))      startCompile({ type: 'compileSource', source: a.text });
+  else if (editorProject)                     editorCompileProject();     // standalone .toml but a project is open
+  else addLog('⚠ Open a .hum file or a project to compile.', 'log-err');
+}
+
+// Debounced linter callback (registered into the editor on 'humeditor-ready').
+// Mirrors editorCompile's routing: a project file is checked in project context
+// (so imports resolve), a standalone .hum on its own.  Returns raw diagnostic
+// dicts; the editor maps them to ranges in the active buffer.
+async function editorCheck(path, text) {
+  if (!compilerAvailable()) return [];
+  const inProject = editorProject && path && (path in editorProject.files);
+  if (inProject) {
+    const snapshot = projectFilesWithOverlay();
+    const signature = aiTextFileSignature(snapshot);
+    const diags = await postCheck({ type: 'checkProject', files: snapshot });
+    if (!Array.isArray(diags)) return []; // timeout is not a successful check
+    lastAICheck = { kind: 'project', signature, diagnostics: diags };
+    // The worker emits a project-relative `file` on every diagnostic, so match
+    // this buffer by exact path (location-less ones, if any, fall through).
+    return diags.filter(d => !d.file || d.file === path);
+  }
+  const diags = await postCheck({ type: 'checkSource', source: text });
+  if (!Array.isArray(diags)) return [];
+  lastAICheck = { kind: 'source', signature: aiTextFileSignature({[path || window.humEditor.getActive()?.name || 'main.hum']: text}), diagnostics: diags };
+  return diags;
+}
+
+// ─── §PANELS ──────────────────────────────────────────────────────────────────
+const panels = [
+  { id: 'graph',     onActivate: null },
+  { id: 'profile',   onActivate: null },
+  { id: 'console',   onActivate: null },
+  { id: 'graphview', onActivate: renderGraphView },
+  { id: 'editor',    onActivate: () => { requestNodeIndex(); if (window.humEditor) window.humEditor.focus(); } },
+];
+let activeTab = 'graph';
+
+function activateTab(id) {
+  activeTab = id;
+  document.querySelectorAll('.tab-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === id));
+  document.querySelectorAll('.tab-pane').forEach(p =>
+    p.classList.toggle('active', p.id === `pane-${id}`));
+  const panel = panels.find(p => p.id === id);
+  if (panel && panel.onActivate) panel.onActivate();
+}
+
+// ─── §CONSOLE ─────────────────────────────────────────────────────────────────
+const consoleHistory = [];
+let consoleHistIdx = -1;
+
+// ─── §INIT ────────────────────────────────────────────────────────────────────
+document.getElementById('transport-select').onchange = e => {
+  const kind = e.target.value;
+  document.getElementById('ws-url').style.display = kind === 'humrt' ? '' : 'none';
+  document.getElementById('baud-select').style.display = kind === 'serial' ? '' : 'none';
+  document.getElementById('browser-audio-controls').style.display = kind === 'web' ? 'flex' : 'none';
+  if (kind !== 'web') { ++captureAction; webHost?.stopLiveInput(); browserAudioInput.stop(); }
+  if (kind === 'web') void browserAudioInput.refresh();
+  updateFlashButton();
+};
+document.getElementById('browser-input-source').onchange = () => {
+  const source = document.getElementById('browser-input-source').value;
+  if (source !== 'live') { ++captureAction; webHost?.stopLiveInput(); browserAudioInput.stop(); }
+  if (source !== 'file') webHost?.stopFile();
+  if (source === 'live') void browserAudioInput.refresh();
+  updateLiveInputUi();
+  updateBrowserAudioButtons();
+};
+document.getElementById('browser-input-refresh').onclick = () => void browserAudioInput.refresh();
+document.getElementById('browser-output-refresh').onclick = () => void refreshOutputDevices();
+document.getElementById('browser-output-device').onchange = async e => {
+  const requested = e.target.value;
+  try {
+    if (webHost) await webHost.setOutputDevice(requested);
+    outputDeviceId = requested;
+    addLog('✓ Browser playback device: ' + (e.target.selectedOptions[0]?.text || 'system default'), 'log-ok');
+    updateLiveDiagnostics();
+  } catch (error) {
+    e.target.value = outputDeviceId;
+    addLog('✖ Output selection: ' + error.message, 'log-err');
+  }
+};
+document.getElementById('browser-input-start').onclick = async () => {
+  try {
+    if (!webHost?.ready) throw new Error('Connect Browser (WASM) with an input graph before starting capture');
+    if (!webHost.inputChannels) throw new Error('Current Hum graph has no audio input');
+    const action = ++captureAction;
+    const started = await browserAudioInput.start(document.getElementById('browser-input-device').value, webHost.inputChannels);
+    if (!started || !browserAudioInput.active || action !== captureAction) return;
+    const routed = await webHost.playLiveInput(browserAudioInput.stream);
+    if (!routed) return; // Stop, graph reload, or disconnect invalidated the pending route.
+    if (action !== captureAction) { webHost.stopLiveInput(); browserAudioInput.stop(); return; }
+    addLog('✓ Live audio routed through Hum AudioWorklet', 'log-ok');
+    updateLiveInputUi();
+  } catch (e) {
+    webHost?.stopLiveInput();
+    browserAudioInput.stop();
+    addLog('✖ Live input: ' + (e.message || browserAudioInput.error), 'log-err');
+  }
+};
+document.getElementById('browser-input-stop').onclick = () => { ++captureAction; webHost?.stopLiveInput(); browserAudioInput.stop(); };
+updateLiveInputUi();
+document.getElementById('browser-file-choose').onclick = () =>
+  document.getElementById('browser-file-input').click();
+document.getElementById('browser-file-input').onchange = e => {
+  browserAudioFile = e.target.files[0] || null;
+  document.getElementById('browser-file-name').textContent = browserAudioFile?.name || 'No file';
+  document.getElementById('browser-file-name').title = browserAudioFile?.name || 'No audio file selected';
+  updateBrowserAudioButtons();
+};
+document.getElementById('browser-file-play').onclick = async () => {
+  if (!webHost || !browserAudioFile) return;
+  try { await webHost.playFile(browserAudioFile,
+      document.getElementById('browser-file-loop').checked); }
+  catch (e) { addLog('✖ Audio file: ' + e.message, 'log-err'); }
+};
+document.getElementById('browser-file-stop').onclick = () => webHost?.stopFile();
+document.getElementById('btn-connect').onclick    = connect;
+document.getElementById('btn-disconnect').onclick = disconnect;
+
+document.getElementById('btn-dump').onclick = () => enqueue('DUMP', 'DUMP');
+document.getElementById('btn-profile').onclick = () => {
+  session.profileData   = {};
+  session.profileBudget = 0;
+  enqueue('PROFILE', 'PROFILE');
+};
+document.getElementById('btn-reset').onclick = () => {
+  if (confirm('Send RESET to the device?')) {
+    cmdQueue.length = 0;
+    enqueue('RESET', 'RESET');
+  }
+};
+
+// Flash the current build to the device.  Enablement is owned by
+// updateFlashButton(); the blob is NOT consumed, so a re-flash needs no recompile.
+document.getElementById('btn-flash-blob').onclick = () => {
+  if (!currentBuild.blob) return;
+  if (webHost) { void loadBrowserBuild(); return; }
+  sendBlob(currentBuild.blob);
+};
+
+document.getElementById('btn-load-blob').onclick     = () => openBuildFolder(true);   // pick a folder
+document.getElementById('build-chip-reload').onclick = () => openBuildFolder(false);  // silent reload
+
+// Graph View controls
+document.getElementById('btn-gv-collapse').onclick = collapseAllSubgraphs;
+document.getElementById('btn-gv-expand').onclick   = expandAllSubgraphs;
+document.getElementById('btn-gv-fit').onclick      = () => fitGraphView('graph');
+document.getElementById('btn-gv-fit-selection').onclick = () => fitGraphView('selection');
+document.getElementById('btn-gv-actual').onclick = () => { gvZoom=1; renderGraphView(); };
+
+// Editor tab controls (glue in §EDITOR; CM6 view + tabs live in hum_editor.js)
+document.getElementById('btn-ed-new').onclick      = editorNew;
+document.getElementById('btn-ed-open').onclick     = editorOpen;
+document.getElementById('btn-ed-openproj').onclick = editorOpenProject;
+document.getElementById('btn-ed-save').onclick     = editorSave;
+document.getElementById('btn-ed-saveas').onclick   = editorSaveAs;
+document.getElementById('btn-ed-compile').onclick  = editorCompile;
+document.getElementById('file-hum-edit').onchange = e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = ev => editorOpenText(ev.target.result, f.name, null, f.name);
+  r.readAsText(f);
+};
+
+document.getElementById('btn-save-preset').onclick = savePreset;
+document.getElementById('btn-load-preset').onclick = () =>
+  document.getElementById('file-preset').click();
+document.getElementById('file-preset').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = ev => applyPreset(ev.target.result);
+  r.readAsText(f);
+  e.target.value = '';
+};
+
+document.getElementById('btn-clear-graph').onclick = () => {
+  doc.graphSeries = [];
+  graphStart = null;
+  clearInterval(pollTimer); pollTimer = null;
+  updateGraphLegend();
+  updateGraphedNames();
+};
+
+// Tab switching
+document.querySelectorAll('.tab-btn').forEach(btn =>
+  btn.addEventListener('click', () => activateTab(btn.dataset.tab)));
+
+// Param search
+document.getElementById('param-search').addEventListener('input', e =>
+  filterParams(e.target.value));
+document.getElementById('btn-clear-selection').onclick = clearSelection;
+document.getElementById('btn-clear-pins').onclick = () => {
+  doc.pinnedParams.clear();
+  syncSelectionUI();
+};
+document.getElementById('btn-ai-copy').onclick = aiCopyContext;
+document.getElementById('btn-ai-download').onclick = aiDownloadContext;
+document.getElementById('ai-context-scope').onchange = () => {
+  document.getElementById('ai-export-status').textContent = '';
+};
+
+// Console command input + history
+(function () {
+  const input = document.getElementById('console-input');
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      const cmd = input.value.trim();
+      if (!cmd) return;
+      input.value    = '';
+      consoleHistIdx = -1;
+      consoleHistory.unshift(cmd);
+      if (consoleHistory.length > 20) consoleHistory.pop();
+      enqueue(cmd, null);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (consoleHistIdx < consoleHistory.length - 1) {
+        consoleHistIdx++;
+        input.value = consoleHistory[consoleHistIdx];
+        setTimeout(() => input.setSelectionRange(input.value.length, input.value.length), 0);
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (consoleHistIdx > 0) {
+        consoleHistIdx--;
+        input.value = consoleHistory[consoleHistIdx];
+      } else {
+        consoleHistIdx = -1;
+        input.value    = '';
+      }
+    }
+  });
+})();
+
+// Graph View click: select nodes/wires; the subgraph chevron toggles expansion.
+document.getElementById('graphview-canvas').addEventListener('click', e => {
+  if (gvDragged) { gvDragged = false; return; }
+  if (!doc.graphModel) return;
+  const pt = graphCoords(e);
+  const hit = graphHitNode(pt);
+  if (hit) {
+    const tr = hit.node._toggleRect;
+    if (tr && pt.x >= tr.x && pt.x <= tr.x + tr.w && pt.y >= tr.y && pt.y <= tr.y + tr.h) {
+      toggleSubgraph(hit.node);
+      return;
+    }
+    selectGraphNode(hit.node, { mode: selectionMode(e) });
+    return;
+  }
+  const edgeHit = graphHitEdge(pt);
+  if (edgeHit) { selectGraphConnection(edgeHit.edge); return; }
+  selectGraphNode(null);
+});
+
+// Double-click a node or source-level wire to reveal the exact authored span.
+document.getElementById('graphview-canvas').addEventListener('dblclick', e => {
+  if (!doc.graphModel) return;
+  e.preventDefault();
+  const pt = graphCoords(e);
+  const hit = graphHitNode(pt);
+  if (hit) {
+    const span = e.shiftKey && hit.node.kind === 'subgraph' && hit.node.definitionSource
+      ? hit.node.definitionSource : hit.node.source;
+    if (span) { navigateToSource(span); return; }
+  }
+  const edgeHit = graphHitEdge(pt);
+  if (edgeHit && edgeHit.edge.source) navigateToSource(edgeHit.edge.source);
+});
+
+// Graph View: wheel to zoom toward cursor
+document.getElementById('graphview-canvas').addEventListener('wheel', e => {
+  if (activeTab !== 'graphview' || !doc.graphModel) return;
+  e.preventDefault();
+  const rect = e.currentTarget.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  let delta = e.deltaY;
+  if (e.deltaMode === 1) delta *= 30;
+  if (e.deltaMode === 2) delta *= 300;
+  const newZoom = Math.max(0.03, Math.min(4, gvZoom * Math.pow(1.001, -delta)));
+  gvPanX = mx - (mx - gvPanX) * (newZoom / gvZoom);
+  gvPanY = my - (my - gvPanY) * (newZoom / gvZoom);
+  gvZoom = newZoom;
+  renderGraphView();
+}, { passive: false });
+
+// Graph View: drag to pan
+document.getElementById('graphview-canvas').addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  gvDragging = true; gvDragged = false;
+  gvDragLast = { x: e.clientX, y: e.clientY };
+  document.getElementById('graphview-canvas-wrap').classList.add('panning');
+});
+document.addEventListener('mousemove', e => {
+  if (!gvDragging) return;
+  const dx = e.clientX - gvDragLast.x, dy = e.clientY - gvDragLast.y;
+  if (Math.abs(dx) > 2 || Math.abs(dy) > 2) gvDragged = true;
+  gvPanX += dx; gvPanY += dy;
+  gvDragLast = { x: e.clientX, y: e.clientY };
+  if (activeTab === 'graphview') renderGraphView();
+});
+document.addEventListener('mouseup', () => {
+  if (!gvDragging) return;
+  gvDragging = false;
+  document.getElementById('graphview-canvas-wrap').classList.remove('panning');
+});
+
+// Graph View: re-render on container resize
+new ResizeObserver(() => {
+  if (activeTab === 'graphview' && doc.graphModel) renderGraphView();
+}).observe(document.getElementById('graphview-canvas-wrap'));
+
+// Drag-drop tuning JSON
+document.body.addEventListener('dragenter', e => {
+  if (e.dataTransfer.types.includes('Files')) document.body.classList.add('dragging');
+});
+document.body.addEventListener('dragleave', e => {
+  if (!e.relatedTarget) document.body.classList.remove('dragging');
+});
+document.body.addEventListener('dragover', e => e.preventDefault());
+document.body.addEventListener('drop', e => {
+  e.preventDefault();
+  document.body.classList.remove('dragging');
+  const files = Array.from(e.dataTransfer.files);
+  if (files.length) loadFiles(files);
+});
+
+// Resize graph canvas
+new ResizeObserver(() => {
+  if (canvas.clientWidth > 0) {
+    canvas.width  = canvas.clientWidth;
+    canvas.height = canvas.clientHeight;
+  }
+}).observe(canvas);
+
+// Initial UI state: empty chip, Flash disabled with a "connect first" tooltip.
+renderBuildChip();
+updateFlashButton();
+renderCompatBadge();
+</script>
+
+<!-- CodeMirror editor module (builds the editor, exposes window.humEditor) -->
+<script type="module" src="hum_editor.js?v=step5"></script>
+</body>
+</html>
