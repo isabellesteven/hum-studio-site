@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <title>hum tune</title>
 
-<!-- CodeMirror 6 (Editor tab). Each ?external= list externalizes only the
+<!-- CodeMirror 6 (Editor pane). Each ?external= list externalizes only the
      CM/Lezer packages so they resolve through THIS map (one shared copy of
      @codemirror/state and @codemirror/view — duplicates break CM6). Leaf deps
      (style-mod, crelt, w3c-keyname) are left for esm.sh to bundle. -->
@@ -173,6 +173,27 @@ select {
   flex: 1;
   overflow: hidden;
 }
+
+
+/* Phase 5.1: existing panes arranged in lightweight, persistent workspaces. */
+#workspace-bar { display:flex; align-items:center; gap:6px; padding:6px 10px;
+  border-bottom:1px solid var(--border); background:var(--panel); flex-shrink:0; }
+#workspace-bar .workspace-btn.active { background:var(--accent); color:#fff; }
+#workspace-bar .workspace-utilities { margin-left:auto; display:flex; align-items:center; gap:5px; }
+#workspace-layout { flex:1; min-width:0; min-height:0; display:grid; overflow:hidden; }
+.workspace-slot { min-width:0; min-height:0; overflow:hidden; display:flex; flex-direction:column; }
+.workspace-slot > .tab-pane, .workspace-slot > #param-panel {
+  display:flex !important; position:relative !important; inset:auto !important;
+  width:100% !important; min-width:0 !important; height:100%; flex:1; border-right:0; }
+.workspace-splitter { background:var(--border); cursor:col-resize; touch-action:none;
+  position:relative; z-index:2; }
+.workspace-splitter:hover, .workspace-splitter.dragging { background:var(--accent); }
+.workspace-splitter:focus-visible { outline:2px solid var(--accent2); outline-offset:-2px; }
+.workspace-slot-title { flex:none; padding:4px 9px; font-size:11px; color:var(--muted);
+  background:var(--panel); border-bottom:1px solid var(--border); }
+body.workspace-resizing, body.workspace-resizing * { cursor:col-resize !important; user-select:none !important; }
+#main.workspace-main { flex-direction:column; }
+#right-panel.workspace-parking { display:none !important; }
 
 /* ── Parameter panel ─────────────────────────────────────────────────── */
 #param-panel {
@@ -629,6 +650,35 @@ body.dragging #drop-overlay { display: flex; }
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* Phase 5.2: compact commands, discoverable target settings and pane visibility. */
+#toolbar { flex-wrap:nowrap; gap:6px; }
+#target-settings { display:none; padding:10px 12px; border-bottom:1px solid var(--border);
+  background:var(--panel); flex:none; max-height:42vh; overflow:auto; }
+#target-settings.open { display:block; }
+#target-settings .target-row { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:5px 0; }
+#target-settings #browser-audio-controls { max-width:100%; }
+#target-settings label { color:var(--muted); font-size:12px; }
+#target-toggle[aria-expanded="true"] { background:var(--accent); color:#fff; }
+#more-actions { position:relative; }
+#more-actions > summary { cursor:pointer; background:var(--border); border-radius:4px;
+ padding:5px 10px; font-size:12px; list-style:none; }
+#more-actions > summary::-webkit-details-marker { display:none; }
+#more-actions .more-actions-content { position:absolute; z-index:50; top:calc(100% + 6px); left:0;
+ background:var(--panel); border:1px solid var(--border); border-radius:6px;
+ padding:9px; min-width:180px; display:flex; flex-direction:column; gap:7px;
+ box-shadow:0 8px 20px #0007; }
+#more-actions:not([open]) .more-actions-content { display:none; }
+#more-actions .more-actions-content button { text-align:left; }
+#pane-visibility { position:relative; }
+#pane-visibility > summary { cursor:pointer; font-size:12px; padding:5px 9px;
+ background:var(--border); border-radius:4px; list-style:none; }
+#pane-visibility > summary::-webkit-details-marker { display:none; }
+#pane-visibility-options { position:absolute; right:0; top:calc(100% + 5px); z-index:40;
+ padding:10px; min-width:165px; background:var(--panel); border:1px solid var(--border);
+ border-radius:6px; box-shadow:0 8px 20px #0007; }
+#pane-visibility-options label { display:flex; align-items:center; gap:8px; margin:6px 0; white-space:nowrap; }
+#workspace-layout .workspace-slot[hidden], #workspace-layout .workspace-splitter[hidden] { display:none !important; }
 </style>
 <link rel="icon" href="data:,">
 </head>
@@ -638,7 +688,8 @@ body.dragging #drop-overlay { display: flex; }
 
 <div id="toolbar">
   <h1>hum tune</h1>
-  <div class="tb-sep"></div>
+  <button id="target-toggle" type="button" aria-expanded="false" aria-controls="target-settings" title="Target and connection settings">Target / Connection ⚙</button>
+  <div id="target-mount" style="display:none"></div>
 
   <select id="transport-select" title="Target transport">
     <option value="serial" selected>Web Serial</option>
@@ -712,6 +763,7 @@ body.dragging #drop-overlay { display: flex; }
 
   <div class="tb-sep"></div>
 
+  <details id="more-actions"><summary>More ▾</summary><div class="more-actions-content"></div></details>
   <button id="btn-dump" disabled>DUMP</button>
   <button id="btn-profile" disabled>PROFILE</button>
   <button id="btn-reset" disabled class="danger">RESET</button>
@@ -730,7 +782,34 @@ body.dragging #drop-overlay { display: flex; }
   <span id="compile-status" title="In-browser compiler status"></span>
 </div>
 
-<div id="main">
+<section id="target-settings" aria-label="Target and connection settings">
+  <div class="target-row" id="target-transport-row"><strong>Connection</strong></div>
+  <div class="target-row" id="target-audio-row"></div>
+</section>
+<div id="workspace-bar" role="toolbar" aria-label="Workspace layout">
+  <span style="color:var(--muted);margin-right:4px">Workspace</span>
+  <button class="workspace-btn" data-workspace="author">Author</button>
+  <button class="workspace-btn" data-workspace="tune">Tune</button>
+  <button class="workspace-btn" data-workspace="profile">Profile</button>
+  <div class="workspace-utilities">
+    <label for="workspace-utility" style="color:var(--muted)">Other views</label>
+    <select id="workspace-utility" aria-label="Other views">
+      <option value="">Choose…</option>
+      <option value="console">Console</option>
+      <option value="plot">Parameter plot</option>
+    </select>
+    <details id="pane-visibility"><summary>Panels ▾</summary><div id="pane-visibility-options" aria-label="Visible workspace panels"></div></details>
+    <button id="workspace-reset" title="Reset pane widths for the current workspace">Reset widths</button>
+  </div>
+</div>
+<div id="main" class="workspace-main">
+  <div id="workspace-layout" aria-label="Resizable workspace">
+    <div id="workspace-slot-0" class="workspace-slot"></div>
+    <div id="workspace-splitter-0" class="workspace-splitter" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Resize first workspace divider"></div>
+    <div id="workspace-slot-1" class="workspace-slot"></div>
+    <div id="workspace-splitter-1" class="workspace-splitter" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Resize second workspace divider"></div>
+    <div id="workspace-slot-2" class="workspace-slot"></div>
+  </div>
 
   <!-- Left: parameter panel -->
   <div id="param-panel">
@@ -2487,7 +2566,7 @@ function renderProfile() {
     rows.appendChild(row);
   }
 
-  if (activeTab !== 'profile') activateTab('profile');
+  if (!isPaneVisible('profile')) activateTab('profile');
 }
 
 // ─── §SHARED SELECTION & PARAM VISIBILITY ────────────────────────────────────
@@ -2602,7 +2681,7 @@ function syncSelectionUI({ scrollParams = false } = {}) {
   if (scrollParams && firstGroup && firstGroup.style.display !== 'none')
     firstGroup.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   window.humEditor?.setLinkedSelections?.(selectedSourceSpans());
-  if (activeTab === 'graphview') renderGraphView();
+  if ((typeof isPaneVisible === 'function' ? isPaneVisible('graphview') : activeTab === 'graphview')) renderGraphView();
 }
 
 function setNodeSelection(id, { mode = 'replace', scrollParams = false, revealGraph = false } = {}) {
@@ -3225,12 +3304,12 @@ function rebuildGraphModel({preserveView=false}={}) {
     doc.graphModel._layout={...doc.graphModel.root._layout};
   }
   if(!preserveView)gvPendingFit='readable';
-  if(activeTab==='graphview')renderGraphView();
+  if(isPaneVisible('graphview'))renderGraphView();
 }
 
 function fitGraphView(mode='graph') {
   gvPendingFit=mode;
-  if(activeTab==='graphview')renderGraphView();
+  if(isPaneVisible('graphview'))renderGraphView();
 }
 
 function fitBounds(bounds,mode,wW,wH) {
@@ -3906,25 +3985,285 @@ async function editorCheck(path, text) {
   return diags;
 }
 
-// ─── §PANELS ──────────────────────────────────────────────────────────────────
+// ─── §PANELS / WORKSPACES ────────────────────────────────────────────────────
+// Reparent the existing pane nodes rather than duplicating controls or state.
+// The tab strip remains parked (and hidden) so legacy activateTab callers still work.
 const panels = [
-  { id: 'graph',     onActivate: null },
-  { id: 'profile',   onActivate: null },
-  { id: 'console',   onActivate: null },
+  { id: 'graph', onActivate: null },
+  { id: 'profile', onActivate: null },
+  { id: 'console', onActivate: null },
   { id: 'graphview', onActivate: renderGraphView },
-  { id: 'editor',    onActivate: () => { requestNodeIndex(); if (window.humEditor) window.humEditor.focus(); } },
+  { id: 'editor', onActivate: () => { requestNodeIndex(); if (window.humEditor) window.humEditor.focus(); } },
 ];
-let activeTab = 'graph';
-
-function activateTab(id) {
-  activeTab = id;
-  document.querySelectorAll('.tab-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.tab === id));
-  document.querySelectorAll('.tab-pane').forEach(p =>
-    p.classList.toggle('active', p.id === `pane-${id}`));
-  const panel = panels.find(p => p.id === id);
-  if (panel && panel.onActivate) panel.onActivate();
+// Phase 5.2: move existing controls, preserving ids, state and handlers.
+const targetRow = document.getElementById('target-transport-row');
+for (const id of ['transport-select','ws-url','baud-select'])
+  targetRow.appendChild(document.getElementById(id));
+document.getElementById('target-audio-row').appendChild(document.getElementById('browser-audio-controls'));
+const moreContent = document.querySelector('#more-actions .more-actions-content');
+for (const id of ['btn-dump','btn-profile','btn-reset','btn-save-preset','btn-load-preset'])
+  moreContent.appendChild(document.getElementById(id));
+const targetToggle = document.getElementById('target-toggle');
+const targetSettings = document.getElementById('target-settings');
+function setTargetSettingsOpen(open) {
+  targetSettings.classList.toggle('open', open);
+  targetToggle.setAttribute('aria-expanded', String(open));
 }
+targetToggle.addEventListener('click', () => {
+  setTargetSettingsOpen(!targetSettings.classList.contains('open'));
+});
+// These are temporary configuration surfaces, not permanent workspace panes.
+// Escape closes all of them, and a click elsewhere dismisses menus without
+// interrupting clicks on the configuration controls themselves.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const wasOpen = targetSettings.classList.contains('open') ||
+    document.getElementById('more-actions').open || document.getElementById('pane-visibility').open;
+  setTargetSettingsOpen(false);
+  document.getElementById('more-actions').open = false;
+  document.getElementById('pane-visibility').open = false;
+  if (wasOpen) { e.preventDefault(); targetToggle.focus(); }
+});
+document.addEventListener('pointerdown', e => {
+  if (!targetSettings.contains(e.target) && !targetToggle.contains(e.target)) setTargetSettingsOpen(false);
+  for (const id of ['more-actions','pane-visibility']) {
+    const menu = document.getElementById(id);
+    if (!menu.contains(e.target)) menu.open = false;
+  }
+});
+const WORKSPACE_LAYOUTS = Object.freeze({
+  author: ['editor', 'graphview', 'params'],
+  tune: ['graphview', 'params'],
+  profile: ['graphview', 'profile'],
+  console: ['graphview', 'console'],
+  plot: ['graphview', 'graph'],
+});
+const WORKSPACE_DEFAULTS = Object.freeze({
+  author: [43, 37, 20], tune: [67, 33], profile: [67, 33],
+  console: [67, 33], plot: [67, 33],
+});
+const WORKSPACE_STORAGE_KEY = 'hum-studio-workspaces-v1';
+let workspaceWidths = Object.create(null);
+let workspaceHidden = Object.create(null);
+let workspaceName = 'author';
+let workspaceInitialized = false;
+let activeTab = 'editor'; // retained for callers that navigate to a pane
+const workspaceLayout = document.getElementById('workspace-layout');
+const workspaceParking = document.getElementById('tab-content');
+const workspaceSlots = [0,1,2].map(i => document.getElementById('workspace-slot-'+i));
+const workspaceSplitters = [0,1].map(i => document.getElementById('workspace-splitter-'+i));
+const workspacePanes = Object.fromEntries(
+  ['graph','profile','console','graphview','editor'].map(id => [id, document.getElementById('pane-'+id)]));
+workspacePanes.params = document.getElementById('param-panel');
+document.getElementById('right-panel').classList.add('workspace-parking');
+
+function validWorkspaceWidths(name, values) {
+  const count = WORKSPACE_LAYOUTS[name]?.length;
+  return Array.isArray(values) && values.length === count &&
+    values.every(n => typeof n === 'number' && Number.isFinite(n) && n >= 10 && n <= 80) &&
+    Math.abs(values.reduce((sum,n)=>sum+n,0)-100) < 0.01;
+}
+function loadWorkspacePreferences() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY) || '{}');
+    for (const name of Object.keys(WORKSPACE_LAYOUTS))
+      if (validWorkspaceWidths(name, stored.widths?.[name])) workspaceWidths[name] = stored.widths[name];
+    for (const name of Object.keys(WORKSPACE_LAYOUTS)) {
+      const hidden = stored.hidden?.[name];
+      if (Array.isArray(hidden) && new Set(hidden).size === hidden.length &&
+          hidden.every(id => WORKSPACE_LAYOUTS[name].includes(id)) &&
+          hidden.length < WORKSPACE_LAYOUTS[name].length)
+        workspaceHidden[name] = hidden.slice();
+    }
+    if (WORKSPACE_LAYOUTS[stored.current]) workspaceName = stored.current;
+  } catch (_) { /* storage may be disabled or corrupt: use defaults */ }
+}
+function saveWorkspacePreferences() {
+  try { localStorage.setItem(WORKSPACE_STORAGE_KEY,
+    JSON.stringify({ current: workspaceName, widths: workspaceWidths, hidden: workspaceHidden })); }
+  catch (_) { /* private browsing can disable persistent storage */ }
+}
+function currentWorkspaceWidths() {
+  return (workspaceWidths[workspaceName] || WORKSPACE_DEFAULTS[workspaceName]).slice();
+}
+function visibleWorkspacePanes() {
+  const hidden = workspaceHidden[workspaceName] || [];
+  return WORKSPACE_LAYOUTS[workspaceName].filter(id => !hidden.includes(id));
+}
+function isPaneVisible(id) { return visibleWorkspacePanes().includes(id); }
+function renderPaneVisibility() {
+  const options = document.getElementById('pane-visibility-options');
+  options.replaceChildren();
+  const visible = visibleWorkspacePanes();
+  WORKSPACE_LAYOUTS[workspaceName].forEach(id => {
+    const label = document.createElement('label');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox'; checkbox.checked = visible.includes(id);
+    checkbox.disabled = checkbox.checked && visible.length === 1;
+    checkbox.dataset.pane = id;
+    checkbox.addEventListener('change', () => {
+      const hidden = new Set(workspaceHidden[workspaceName] || []);
+      if (checkbox.checked) hidden.delete(id); else hidden.add(id);
+      if (hidden.size >= WORKSPACE_LAYOUTS[workspaceName].length) return;
+      workspaceHidden[workspaceName] = [...hidden];
+      setWorkspace(workspaceName, true, true);
+    });
+    label.append(checkbox, document.createTextNode(id === 'graphview' ? 'Graph View' : id === 'params' ? 'Parameters' : id === 'graph' ? 'Plot' : id[0].toUpperCase()+id.slice(1)));
+    options.appendChild(label);
+  });
+}
+function applyWorkspaceGrid() {
+  const all = WORKSPACE_LAYOUTS[workspaceName];
+  const visible = visibleWorkspacePanes();
+  const widths = currentWorkspaceWidths();
+  const sum = visible.reduce((v,id) => v + widths[all.indexOf(id)],0);
+  const usable = Math.max(0, workspaceLayout.clientWidth - (visible.length-1)*7);
+  const columns = [];
+  visible.forEach((id,i) => {
+    columns.push(`minmax(0, ${usable * widths[all.indexOf(id)]/sum}px)`);
+    if (i < visible.length-1) columns.push('7px');
+  });
+  workspaceLayout.style.gridTemplateColumns = columns.join(' ');
+  workspaceSlots.forEach((slot,i) => { slot.style.display = i < visible.length ? 'flex' : 'none'; });
+  workspaceSplitters.forEach((splitter,i) => {
+    const active = i < visible.length-1;
+    splitter.style.display = active ? 'block' : 'none';
+    splitter.tabIndex = active ? 0 : -1;
+    splitter.setAttribute('aria-valuemin', '10');
+    splitter.setAttribute('aria-valuemax', '90');
+    splitter.setAttribute('aria-valuenow', active ? String(Math.round(100*widths[all.indexOf(visible[i])]/sum)) : '0');
+    splitter.setAttribute('aria-valuetext', active ? `Left pane ${Math.round(100*widths[all.indexOf(visible[i])]/sum)} percent` : 'Inactive divider');
+  });
+}
+function setWorkspace(name, persist=true, force=false) {
+  if (!WORKSPACE_LAYOUTS[name]) return;
+  if (workspaceInitialized && workspaceName === name && !force) return;
+  workspaceName = name;
+  workspaceInitialized = true;
+  const layout = visibleWorkspacePanes();
+  for (const pane of Object.values(workspacePanes)) {
+    pane.classList.remove('active');
+    workspaceParking.appendChild(pane);
+  }
+  workspaceSlots.forEach(slot => slot.replaceChildren());
+  layout.forEach((id,i) => {
+    const slot = workspaceSlots[i];
+    const title = document.createElement('div');
+    title.className = 'workspace-slot-title';
+    title.textContent = id === 'graphview' ? 'Graph View' : id === 'params'
+      ? (name === 'author' ? 'Inspector / Parameters' : 'Parameters')
+      : id === 'graph' ? 'Parameter Plot' : id[0].toUpperCase()+id.slice(1);
+    slot.appendChild(title);
+    const pane = workspacePanes[id];
+    pane.classList.add('active');
+    slot.appendChild(pane);
+  });
+  activeTab = name === 'author' ? 'editor' : name === 'profile' ? 'profile'
+    : name === 'console' ? 'console' : name === 'plot' ? 'graph' : 'graphview';
+  document.querySelectorAll('.workspace-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.workspace === name);
+    btn.setAttribute('aria-pressed', String(btn.dataset.workspace === name));
+  });
+  document.getElementById('workspace-utility').value = name === 'console' || name === 'plot' ? name : '';
+  applyWorkspaceGrid();
+  renderPaneVisibility();
+  if (persist) saveWorkspacePreferences();
+  if (isPaneVisible('editor')) { requestNodeIndex(); window.humEditor?.requestMeasure?.(); }
+  if (isPaneVisible('graphview')) requestAnimationFrame(() => renderGraphView());
+}
+function activateTab(id) {
+  // Navigation must reveal the requested pane even when a user hid it.
+  const target = id === 'editor' ? 'author' : id === 'profile' ? 'profile' :
+    id === 'console' ? 'console' : id === 'graph' ? 'plot' : 'tune';
+  if (WORKSPACE_LAYOUTS[target]?.includes(id) && (workspaceHidden[target] || []).includes(id)) {
+    workspaceHidden[target] = workspaceHidden[target].filter(hiddenId => hiddenId !== id);
+    if (workspaceName === target) setWorkspace(target, true, true);
+    else saveWorkspacePreferences();
+  }
+  // Legacy navigation is mapped into a visible workspace; no hidden tabs remain.
+  if (id === 'editor') setWorkspace('author');
+  else if (id === 'profile') setWorkspace('profile');
+  else if (id === 'console') setWorkspace('console');
+  else if (id === 'graph') setWorkspace('plot');
+  else if (id === 'graphview') {
+    if (!isPaneVisible('graphview')) {
+      workspaceHidden.tune = (workspaceHidden.tune || []).filter(p => p !== 'graphview');
+      setWorkspace('tune', true, true);
+    }
+    else renderGraphView();
+  }
+}
+function resizeWorkspaceDivider(index, deltaPct) {
+  const widths = currentWorkspaceWidths();
+  const all = WORKSPACE_LAYOUTS[workspaceName];
+  const visible = visibleWorkspacePanes();
+  if (index < 0 || index >= visible.length-1) return;
+  const i = all.indexOf(visible[index]), j = all.indexOf(visible[index+1]);
+  const totalVisible = visible.reduce((v,id) => v+widths[all.indexOf(id)],0);
+  const pairTotal = widths[i] + widths[j];
+  const delta = deltaPct * totalVisible / 100;
+  const minimum = Math.min(10, pairTotal/3);
+  const first = Math.max(minimum, Math.min(pairTotal-minimum, widths[i]+delta));
+  widths[i] = first;
+  widths[j] = pairTotal-first;
+  workspaceWidths[workspaceName] = widths;
+  applyWorkspaceGrid();
+  saveWorkspacePreferences();
+}
+workspaceSplitters.forEach((splitter,index) => {
+  splitter.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || !splitter.offsetParent) return;
+    e.preventDefault();
+    splitter.setPointerCapture(e.pointerId);
+    splitter.classList.add('dragging');
+    document.body.classList.add('workspace-resizing');
+    let x = e.clientX;
+    const move = ev => {
+      const usable = workspaceLayout.clientWidth - (visibleWorkspacePanes().length-1)*7;
+      if (usable <= 0) return;
+      resizeWorkspaceDivider(index, (ev.clientX-x)*100/usable);
+      x = ev.clientX;
+    };
+    const end = () => {
+      splitter.removeEventListener('pointermove',move);
+      splitter.removeEventListener('pointerup',end);
+      splitter.removeEventListener('pointercancel',end);
+      splitter.removeEventListener('lostpointercapture',end);
+      window.removeEventListener('blur',end);
+      splitter.classList.remove('dragging');
+      document.body.classList.remove('workspace-resizing');
+    };
+    splitter.addEventListener('pointermove',move);
+    splitter.addEventListener('pointerup',end);
+    splitter.addEventListener('pointercancel',end);
+    splitter.addEventListener('lostpointercapture',end);
+    window.addEventListener('blur',end);
+  });
+  splitter.addEventListener('keydown',e => {
+    if (!['ArrowLeft','ArrowRight'].includes(e.key)) return;
+    e.preventDefault();
+    resizeWorkspaceDivider(index, e.key==='ArrowRight' ? 2 : -2);
+  });
+});
+document.querySelectorAll('.workspace-btn').forEach(btn =>
+  btn.addEventListener('click',() => setWorkspace(btn.dataset.workspace)));
+document.getElementById('workspace-utility').onchange = e => {
+  if (WORKSPACE_LAYOUTS[e.target.value]) setWorkspace(e.target.value);
+};
+document.getElementById('workspace-reset').onclick = () => {
+  delete workspaceWidths[workspaceName];
+  applyWorkspaceGrid(); saveWorkspacePreferences();
+};
+new ResizeObserver(() => {
+  applyWorkspaceGrid();
+  if (isPaneVisible('graphview') && doc.graphModel) renderGraphView();
+  window.humEditor?.requestMeasure?.();
+}).observe(workspaceLayout);
+loadWorkspacePreferences();
+setWorkspace(workspaceName, false);
+// Apply initial transport-specific visibility without triggering connection changes.
+document.getElementById('ws-url').style.display = 'none';
+document.getElementById('browser-audio-controls').style.display = 'none';
 
 // ─── §CONSOLE ─────────────────────────────────────────────────────────────────
 const consoleHistory = [];
@@ -4152,7 +4491,7 @@ document.getElementById('graphview-canvas').addEventListener('dblclick', e => {
 
 // Graph View: wheel to zoom toward cursor
 document.getElementById('graphview-canvas').addEventListener('wheel', e => {
-  if (activeTab !== 'graphview' || !doc.graphModel) return;
+  if (!isPaneVisible('graphview') || !doc.graphModel) return;
   e.preventDefault();
   const rect = e.currentTarget.getBoundingClientRect();
   const mx = e.clientX - rect.left, my = e.clientY - rect.top;
@@ -4179,7 +4518,7 @@ document.addEventListener('mousemove', e => {
   if (Math.abs(dx) > 2 || Math.abs(dy) > 2) gvDragged = true;
   gvPanX += dx; gvPanY += dy;
   gvDragLast = { x: e.clientX, y: e.clientY };
-  if (activeTab === 'graphview') renderGraphView();
+  if (isPaneVisible('graphview')) renderGraphView();
 });
 document.addEventListener('mouseup', () => {
   if (!gvDragging) return;
@@ -4189,7 +4528,7 @@ document.addEventListener('mouseup', () => {
 
 // Graph View: re-render on container resize
 new ResizeObserver(() => {
-  if (activeTab === 'graphview' && doc.graphModel) renderGraphView();
+  if (isPaneVisible('graphview') && doc.graphModel) renderGraphView();
 }).observe(document.getElementById('graphview-canvas-wrap'));
 
 // Drag-drop tuning JSON
@@ -4222,6 +4561,6 @@ renderCompatBadge();
 </script>
 
 <!-- CodeMirror editor module (builds the editor, exposes window.humEditor) -->
-<script type="module" src="hum_editor.js?v=step5"></script>
+<script type="module" src="hum_editor.js?v=phase5_1"></script>
 </body>
 </html>
